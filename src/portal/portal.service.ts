@@ -201,7 +201,11 @@ export class PortalService {
       return tx.pedidoPortal.update({
         where: { id },
         data: { estado: 'CONVERTIDO', despachoId: despacho.id },
-        include: { items: true },
+        // El frontend lee res.data.despacho.numero para el toast de éxito
+        // (PortalPedidos.jsx handleAprobar) — sin este include, caía al
+        // fallback res.data.numero, que es el numero del PEDIDO, no del
+        // Despacho recién creado (hallazgo de la sesión de QA E2E).
+        include: { items: true, despacho: { select: { numero: true } } },
       });
     });
   }

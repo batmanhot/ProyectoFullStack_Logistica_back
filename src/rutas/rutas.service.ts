@@ -154,7 +154,7 @@ export class RutasService {
 
       const esResolucionFinal = dto.estado === 'ENTREGADO' || dto.estado === 'FALLIDO';
 
-      return tx.parada.update({
+      await tx.parada.update({
         where: { id: parada.id },
         data: {
           estado: dto.estado,
@@ -164,6 +164,15 @@ export class RutasService {
             horaPartida: new Date(),
           }),
         },
+      });
+
+      // Devolver la Ruta completa (no solo la Parada actualizada): el
+      // frontend reemplaza el detalle abierto en pantalla con esta
+      // respuesta (ModalDetalleRuta espera numero/estado/paradas de la
+      // Ruta, no de una Parada suelta — encontrado en la sesión de QA).
+      return tx.ruta.findFirst({
+        where: { id: rutaId },
+        include: { paradas: { include: { despacho: true }, orderBy: { orden: 'asc' } } },
       });
     });
   }

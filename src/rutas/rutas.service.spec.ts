@@ -78,10 +78,14 @@ describe('RutasService', () => {
         paradas: [{ id: 'p1', despachoId: 'd1', horaLlegada: null }],
       } as any);
 
-      const txMock = { parada: { update: vi.fn().mockResolvedValue({}) } };
+      const rutaActualizada = { id: 'r1', numero: 'RUTA-00001', estado: 'EN_RUTA', paradas: [] };
+      const txMock = {
+        parada: { update: vi.fn().mockResolvedValue({}) },
+        ruta: { findFirst: vi.fn().mockResolvedValue(rutaActualizada) },
+      };
       prismaMock.withTenant.mockImplementation((_e: string, fn: any) => fn(txMock));
 
-      await service.marcarParada('e1', 'r1', 'd1', { estado: 'ENTREGADO' } as any);
+      const resultado = await service.marcarParada('e1', 'r1', 'd1', { estado: 'ENTREGADO' } as any);
 
       expect(despachosMock.entregarEnTransaccion).toHaveBeenCalledWith(txMock, 'e1', 'd1');
       expect(txMock.parada.update).toHaveBeenCalledWith(
@@ -90,6 +94,9 @@ describe('RutasService', () => {
           data: expect.objectContaining({ estado: 'ENTREGADO' }),
         }),
       );
+      // Devuelve la Ruta completa, no la Parada suelta — el frontend
+      // reemplaza el detalle en pantalla con esta respuesta.
+      expect(resultado).toEqual(rutaActualizada);
     });
   });
 
