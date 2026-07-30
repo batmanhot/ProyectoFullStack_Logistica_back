@@ -1,0 +1,1374 @@
+// ═══════════════════════════════════════════════════════════════════
+// StockPro — Backend Schema (Fase 1+2+3: Auth · Catálogos · Inventario)
+//
+// Stack: Node.js + TypeScript + Fastify + Prisma + PostgreSQL
+// Decisión confirmada: PostgreSQL como motor único y definitivo.
+// Se descarta la portabilidad a SQL Server — el costo de mantener
+// dos dialectos compatibles supera el beneficio de una migración
+// hipotética. Esto nos permite usar features nativas de Postgres:
+//   - pg_trgm + índices GIN para búsqueda difusa server-side
+//     (sustituye los filtros .includes() en JS de getClientes/getAuditoria)
+//   - JSONB consultable (Auditoria.datos puede filtrarse, no solo guardarse)
+//   - Row-Level Security por tenant como capa extra de aislamiento
+//     (se implementa con SQL crudo en la migración, ver nota al final)
+// ═══════════════════════════════════════════════════════════════════
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pg_trgm]
+}
+
+// ─────────────────────────────────────────────────────────────────
+// MULTI-TENANT — Reemplaza el doble registro actual
+// (sp_empresas + saas_negocios) por una sola fuente de verdad.
+// Fase 7d agrega telefono/fechaVencimiento/notas (gestión SaaS real).
+// Fase 7f agrega direccion (punto de partida en la GRE).
+// ─────────────────────────────────────────────────────────────────
+model Empresa {
+  id               String    @id @default(cuid())
+  codigo           String    @unique // slug usado en login: 'dlnorte', 'acme', etc. Siempre lowercase.
+  nombre           String
+  ruc              String    @unique
+  contacto         String?
+  email            String?
+  telefono         String?
+  direccion        String? // Fase 7f — punto de partida en la Guía de Remisión Electrónica
+  plan             String    @default("starter") // referencia LIBRE a PlanSaaS.id (no FK estricta — ver Fase 7d)
+  estado           String    @default("activo") // activo | suspendido | cancelado
+  activo           Boolean   @default(true)
+  origen           String    @default("admin_saas") // 'demo' | 'admin_saas' — trazabilidad de cómo se creó
+  modoDesarrollo   Boolean   @default(false) // switch en Configuración → Sistema: activa accesos rápidos demo en el Login (solo tiene efecto si origen='demo')
+  fechaVencimiento DateTime? // vencimiento de la suscripción (Fase 7d)
+  notas            String? // notas internas del PlatformAdmin (Fase 7d)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  usuarios                  Usuario[]
+  roles                     Rol[]
+  categorias                Categoria[]
+  almacenes                 Almacen[]
+  proveedores               Proveedor[]
+  productos                 Producto[]
+  movimientos               Movimiento[]
+  auditorias                Auditoria[]
+  clientes                  Cliente[]
+  ordenesCompra             OrdenCompra[]
+  cotizaciones              Cotizacion[]
+  proformas                 Proforma[]
+  cuentasPorCobrar          CuentaPorCobrar[]
+  transportistas            Transportista[]
+  despachos                 Despacho[]
+  rutas                     Ruta[]
+  areasInternas             AreaInterna[]
+  pedidosInternos           PedidoInterno[]
+  inventariosFisicos        InventarioFisico[]
+  vehiculosFlota            VehiculoFlota[]
+  renovacionesPlan          RenovacionPlan[]
+  pedidosPortal             PedidoPortal[]
+  facturasB2B               FacturaB2B[]
+  guiasRemisionElectronicas GuiaRemisionElectronica[]
+  listasPrecios             ListaPrecios[]
+
+  @@map("empresas")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// AUTH — Usuarios, Roles y Permisos
+// Roles NO son un enum fijo: son datos, para soportar roles_custom
+// que ya existe en el frontend (tienePermiso() consulta roles por tenant).
+// ─────────────────────────────────────────────────────────────────
+model Usuario {
+  id           String       @id @default(cuid())
+  empresaId    String
+  empresa      Empresa      @relation(fields: [empresaId], references: [id])
+  nombre       String
+  email        String
+  passwordHash String // bcrypt — NUNCA texto plano (hallazgo de seguridad ya detectado en BACKEND_PENDIENTES.md)
+  rolId        String
+  rol          Rol          @relation(fields: [rolId], references: [id])
+  // Auditoría de seguridad 2026-07-29 (Hallazgo Alto #6): permite revocar
+  // TODOS los refresh tokens emitidos antes de este valor (logout real,
+  // sin tabla de tokens). Se incrementa en logout() — cualquier refresh
+  // token con un tokenVersion menor al actual deja de servir de inmediato.
+  tokenVersion Int          @default(0)
+  // Fase 6 — el rol 'solicitante' queda atado a un área específica
+  // (sesion.areaId en PedidosInternos.jsx real). Nullable porque solo
+  // aplica a usuarios con ese rol; el resto no necesita área.
+  areaId       String?
+  area         AreaInterna? @relation(fields: [areaId], references: [id])
+  activo       Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  pedidosSolicitados           PedidoInterno[]         @relation("PedidoSolicitante")
+  pedidosAprobados             PedidoInterno[]         @relation("PedidoAprobador")
+  pedidosEntregados            PedidoInterno[]         @relation("PedidoEntregador")
+  inventariosFisicosRealizados InventarioFisico[]
+  mantenimientosRegistrados    MantenimientoVehiculo[]
+
+  @@unique([empresaId, email]) // email único POR tenant, no global
+  @@index([empresaId])
+  @@map("usuarios")
+}
+
+model Rol {
+  id              String   @id @default(cuid())
+  empresaId       String? // null = rol de catálogo base (owner/admin/supervisor/almacenero/solicitante)
+  empresa         Empresa? @relation(fields: [empresaId], references: [id])
+  codigo          String // 'owner' | 'admin' | 'supervisor' | 'almacenero' | 'solicitante' | custom
+  label           String // nombre visible: 'Propietario', 'Administrador', etc.
+  esPersonalizado Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  permisos Permiso[]
+  usuarios Usuario[]
+
+  @@unique([empresaId, codigo])
+  @@map("roles")
+}
+
+model Permiso {
+  id     String @id @default(cuid())
+  rolId  String
+  rol    Rol    @relation(fields: [rolId], references: [id], onDelete: Cascade)
+  modulo String // nombre del módulo ('inventario', 'despachos', ...) o '*' para acceso total
+
+  @@unique([rolId, modulo])
+  @@map("permisos")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// AUDITORÍA — Mapea 1:1 con registrarAuditoria()/getAuditoria() actual
+// ─────────────────────────────────────────────────────────────────
+model Auditoria {
+  id            String   @id @default(cuid())
+  empresaId     String
+  empresa       Empresa  @relation(fields: [empresaId], references: [id])
+  usuarioId     String? // nullable: acciones de 'sistema' o intentos de login fallidos
+  usuarioNombre String
+  accion        String // CREATE | UPDATE | DELETE | LOGIN | LOGOUT | LOGIN_FAILED
+  modulo        String
+  detalle       String
+  datos         Json? // solo almacenamiento, nunca se filtra por su contenido
+  timestamp     DateTime @default(now())
+
+  @@index([empresaId, modulo])
+  @@index([empresaId, usuarioId])
+  @@index([detalle(ops: raw("gin_trgm_ops"))], type: Gin) // reemplaza el filtro busqueda actual hecho en JS
+  @@map("auditoria")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// CATÁLOGOS MAESTROS
+// ─────────────────────────────────────────────────────────────────
+model Categoria {
+  id          String   @id @default(cuid())
+  empresaId   String
+  empresa     Empresa  @relation(fields: [empresaId], references: [id])
+  nombre      String
+  descripcion String?
+  estado      String   @default("Activo")
+  createdAt   DateTime @default(now())
+
+  productos          Producto[]
+  inventariosFisicos InventarioFisico[]
+
+  @@index([empresaId])
+  @@map("categorias")
+}
+
+model Almacen {
+  id        String   @id @default(cuid())
+  empresaId String
+  empresa   Empresa  @relation(fields: [empresaId], references: [id])
+  nombre    String
+  activo    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  ubicaciones        Ubicacion[]
+  inventario         Inventario[]
+  movimientos        Movimiento[]       @relation("MovimientoAlmacen")
+  ordenesCompra      OrdenCompra[]
+  despachos          Despacho[]
+  pedidosInternos    PedidoInterno[]
+  inventariosFisicos InventarioFisico[]
+  rutas              Ruta[]
+
+  @@index([empresaId])
+  @@map("almacenes")
+}
+
+// Nuevo respecto al frontend actual: las "ubicaciones" hoy viven solo en
+// initialData.js (no hay CRUD en storage.js todavía). Se modela porque
+// MapaAlmacen.jsx claramente las necesita — confirmado en Fase 2.
+model Ubicacion {
+  id              String  @id @default(cuid())
+  almacenId       String
+  almacen         Almacen @relation(fields: [almacenId], references: [id])
+  codigo          String
+  tipo            String // Estantería | Rack | Piso
+  zona            String // Picking | Reserva | Cuarentena
+  capacidadMax    Int
+  capacidadActual Int     @default(0)
+  estado          String  @default("Disponible")
+  observaciones   String?
+
+  inventario Inventario[]
+
+  @@unique([almacenId, codigo])
+  @@map("ubicaciones")
+}
+
+model Proveedor {
+  id          String   @id @default(cuid())
+  empresaId   String
+  empresa     Empresa  @relation(fields: [empresaId], references: [id])
+  razonSocial String
+  ruc         String?
+  telefono    String?
+  email       String?
+  direccion   String?
+  activo      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  // Auditoría de seguridad 2026-07-29 (Hallazgo Alto #10): revoca el link del
+  // Portal de Proveedores vigente. Se incrementa cada vez que se regenera el
+  // link (PortalProveedorService.generarLink).
+  portalTokenVersion Int @default(0)
+
+  productos     Producto[]
+  ordenesCompra OrdenCompra[]
+  respuestas    RespuestaProveedor[]
+  facturasB2B   FacturaB2B[]
+
+  @@index([empresaId])
+  @@index([razonSocial(ops: raw("gin_trgm_ops"))], type: Gin) // búsqueda difusa server-side, reemplaza el .includes() actual
+  @@map("proveedores")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// INVENTARIO — Productos, Lotes (separados, no anidados) e Inventario por ubicación
+// Fase 7f agrega codigoSunat (catálogo de bienes/servicios SUNAT, usado en la GRE).
+// ─────────────────────────────────────────────────────────────────
+model Producto {
+  id           String     @id @default(cuid())
+  empresaId    String
+  empresa      Empresa    @relation(fields: [empresaId], references: [id])
+  sku          String
+  nombre       String
+  barcode      String?
+  categoriaId  String?
+  categoria    Categoria? @relation(fields: [categoriaId], references: [id])
+  proveedorId  String?
+  proveedor    Proveedor? @relation(fields: [proveedorId], references: [id])
+  unidadMedida String?
+  esPerecedero Boolean    @default(false)
+  stockMinimo  Decimal?   @db.Decimal(12, 2)
+  stockMaximo  Decimal?   @db.Decimal(12, 2)
+  stockActual  Decimal    @default(0) @db.Decimal(12, 2) // calculado, pero cacheado igual que hoy
+  precioCompra Decimal?   @db.Decimal(12, 2)
+  precioVenta  Decimal?   @db.Decimal(12, 2)
+  codigoSunat  String? // Fase 7f — código del catálogo de bienes/servicios SUNAT (opcional)
+  estado       String     @default("Activo")
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  lotes                  LoteProducto[]
+  movimientos            Movimiento[]
+  inventario             Inventario[]
+  ordenCompraItems       OrdenCompraItem[]
+  cotizacionItems        CotizacionItem[]
+  respuestaItems         RespuestaItem[]
+  proformaItems          ProformaItem[]
+  despachoItems          DespachoItem[]
+  pedidoInternoItems     PedidoInternoItem[]
+  inventarioFisicoLineas InventarioFisicoLinea[]
+  pedidoPortalItems      PedidoPortalItem[]
+
+  @@unique([empresaId, sku])
+  @@index([empresaId])
+  @@index([nombre(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("productos")
+}
+
+// Corrige el patrón de anidar batches[] dentro del producto
+// (mismo bug arquitectónico que tuviste con serials[] en el Minimarket).
+model LoteProducto {
+  id               String    @id @default(cuid())
+  productoId       String
+  producto         Producto  @relation(fields: [productoId], references: [id])
+  numero           String
+  fechaVencimiento DateTime?
+  cantidadOriginal Decimal   @db.Decimal(12, 2)
+  cantidadActual   Decimal   @db.Decimal(12, 2)
+  estado           String    @default("Vigente") // Vigente | Por Vencer | Vencido
+  createdAt        DateTime  @default(now())
+
+  movimientos Movimiento[]
+
+  @@unique([productoId, numero])
+  @@map("lotes_producto")
+}
+
+// Stock por almacén + ubicación (hoy vive en InitialInventory como snapshot plano)
+model Inventario {
+  id                String     @id @default(cuid())
+  productoId        String
+  producto          Producto   @relation(fields: [productoId], references: [id])
+  almacenId         String
+  almacen           Almacen    @relation(fields: [almacenId], references: [id])
+  ubicacionId       String?
+  ubicacion         Ubicacion? @relation(fields: [ubicacionId], references: [id])
+  cantidad          Decimal    @default(0) @db.Decimal(12, 2)
+  // Fase 5 — Stock Reservado: cuánto de `cantidad` está comprometido con
+  // Despachos que aún no se despacharon físicamente. "Disponible" para
+  // nuevos despachos = cantidad - cantidadReservada. Nunca reduce `cantidad`
+  // directamente — eso solo lo hace un Movimiento real (ver DespachosService).
+  cantidadReservada Decimal    @default(0) @db.Decimal(12, 2)
+  updatedAt         DateTime   @updatedAt
+
+  @@unique([productoId, almacenId, ubicacionId])
+  @@index([almacenId])
+  @@map("inventario")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// MOVIMIENTOS — Libro ÚNICO y unificado.
+// Corrige el Hallazgo #1: ajustes y devoluciones HOY no entran al Kardex
+// porque viven en colecciones separadas. Aquí todo es un Movimiento con
+// tipo, y el Kardex se calcula sobre esta única tabla.
+// ─────────────────────────────────────────────────────────────────
+enum TipoMovimiento {
+  ENTRADA
+  SALIDA
+  AJUSTE
+  TRANSFERENCIA
+  DEVOLUCION
+}
+
+model Movimiento {
+  id               String         @id @default(cuid())
+  empresaId        String
+  empresa          Empresa        @relation(fields: [empresaId], references: [id])
+  tipo             TipoMovimiento
+  productoId       String
+  producto         Producto       @relation(fields: [productoId], references: [id])
+  loteId           String?
+  lote             LoteProducto?  @relation(fields: [loteId], references: [id])
+  almacenId        String
+  almacen          Almacen        @relation("MovimientoAlmacen", fields: [almacenId], references: [id])
+  almacenDestinoId String? // solo poblado cuando tipo = TRANSFERENCIA
+  cantidad         Decimal        @db.Decimal(12, 2)
+  costoUnitario    Decimal?       @db.Decimal(12, 2)
+  motivo           String?
+  documento        String?
+  fecha            DateTime       @default(now())
+  createdAt        DateTime       @default(now())
+
+  @@index([empresaId, productoId])
+  @@index([empresaId, tipo, fecha])
+  @@map("movimientos")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// FASE 4 — Clientes, Órdenes de Compra, Cotizaciones (RFQ), Proformas, CxC
+// Agregado en sesión de Fase 4. A diferencia de Fase 1-3, esta sección NO
+// venía en el documento original ("No modelada aún" en el Roadmap) — se
+// diseñó auditando demoData.js real del frontend (CLIENTES_DEMO, OC, COT,
+// PROF_DEMO, CXC_DEMO), igual que se hizo originalmente para Fase 1-3.
+// ─────────────────────────────────────────────────────────────────
+
+model Cliente {
+  id          String   @id @default(cuid())
+  empresaId   String
+  empresa     Empresa  @relation(fields: [empresaId], references: [id])
+  razonSocial String
+  ruc         String?
+  contacto    String?
+  telefono    String?
+  email       String?
+  direccion   String?
+  condicionPago  String?
+  limiteCredito  Decimal? @db.Decimal(12, 2)
+  notas          String?
+  activo      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  // Auditoría de seguridad 2026-07-29 (Hallazgo Alto #10): revoca el link del
+  // Portal de Clientes vigente. Se incrementa cada vez que se regenera el link
+  // (PortalService.generarLink) — cualquier token firmado antes deja de servir.
+  portalTokenVersion Int @default(0)
+
+  proformas        Proforma[]
+  cuentasPorCobrar CuentaPorCobrar[]
+  despachos        Despacho[]
+  pedidosPortal    PedidoPortal[]
+
+  @@index([empresaId])
+  @@index([razonSocial(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("clientes")
+}
+
+// ── Órdenes de Compra — recibir una OC genera un Movimiento ENTRADA real
+// (decisión de Fase 4: integrado con el motor de Fase 3, no bookkeeping aparte) ──
+enum EstadoOrdenCompra {
+  PENDIENTE
+  APROBADA
+  PARCIAL
+  RECIBIDA
+  CANCELADA
+}
+
+model OrdenCompra {
+  id           String            @id @default(cuid())
+  empresaId    String
+  empresa      Empresa           @relation(fields: [empresaId], references: [id])
+  numero       String
+  proveedorId  String
+  proveedor    Proveedor         @relation(fields: [proveedorId], references: [id])
+  almacenId    String // a dónde entra la mercadería al recibir — obligatorio para poder generar el Movimiento
+  almacen      Almacen           @relation(fields: [almacenId], references: [id])
+  fecha        DateTime          @default(now())
+  fechaEntrega DateTime?
+  estado       EstadoOrdenCompra @default(PENDIENTE)
+  subtotal     Decimal           @db.Decimal(12, 2)
+  igv          Decimal           @db.Decimal(12, 2)
+  total        Decimal           @db.Decimal(12, 2)
+  notas        String?
+  createdAt    DateTime          @default(now())
+
+  items      OrdenCompraItem[]
+  facturaB2B FacturaB2B?
+
+  @@unique([empresaId, numero])
+  @@index([empresaId])
+  @@map("ordenes_compra")
+}
+
+model OrdenCompraItem {
+  id               String      @id @default(cuid())
+  ordenCompraId    String
+  ordenCompra      OrdenCompra @relation(fields: [ordenCompraId], references: [id], onDelete: Cascade)
+  productoId       String
+  producto         Producto    @relation(fields: [productoId], references: [id])
+  cantidad         Decimal     @db.Decimal(12, 2)
+  costoUnitario    Decimal     @db.Decimal(12, 2)
+  cantidadRecibida Decimal     @default(0) @db.Decimal(12, 2)
+
+  @@map("orden_compra_items")
+}
+
+// ── Cotización = RFQ a proveedores (NO es cotización de venta — ver Proforma).
+// Varios proveedores responden con precios; una respuesta se marca ganadora. ──
+enum EstadoCotizacion {
+  BORRADOR
+  ENVIADA
+  RESPONDIDA
+  ADJUDICADA
+  CANCELADA
+}
+
+model Cotizacion {
+  id               String           @id @default(cuid())
+  empresaId        String
+  empresa          Empresa          @relation(fields: [empresaId], references: [id])
+  numero           String
+  fecha            DateTime         @default(now())
+  fechaVencimiento DateTime?
+  estado           EstadoCotizacion @default(BORRADOR)
+  notas            String?
+  createdAt        DateTime         @default(now())
+
+  items      CotizacionItem[]
+  respuestas RespuestaProveedor[]
+
+  @@unique([empresaId, numero])
+  @@index([empresaId])
+  @@map("cotizaciones")
+}
+
+model CotizacionItem {
+  id           String     @id @default(cuid())
+  cotizacionId String
+  cotizacion   Cotizacion @relation(fields: [cotizacionId], references: [id], onDelete: Cascade)
+  productoId   String
+  producto     Producto   @relation(fields: [productoId], references: [id])
+  descripcion  String?
+  cantidad     Decimal    @db.Decimal(12, 2)
+
+  @@map("cotizacion_items")
+}
+
+model RespuestaProveedor {
+  id            String     @id @default(cuid())
+  cotizacionId  String
+  cotizacion    Cotizacion @relation(fields: [cotizacionId], references: [id], onDelete: Cascade)
+  proveedorId   String
+  proveedor     Proveedor  @relation(fields: [proveedorId], references: [id])
+  fecha         DateTime   @default(now())
+  total         Decimal    @db.Decimal(12, 2)
+  tiempoEntrega Int? // días
+  notas         String?
+  ganadora      Boolean    @default(false) // solo UNA respuesta por cotización puede ser true — se valida en el service
+
+  items RespuestaItem[]
+
+  @@unique([cotizacionId, proveedorId]) // un proveedor responde una sola vez por RFQ
+  @@map("respuestas_proveedor")
+}
+
+model RespuestaItem {
+  id             String             @id @default(cuid())
+  respuestaId    String
+  respuesta      RespuestaProveedor @relation(fields: [respuestaId], references: [id], onDelete: Cascade)
+  productoId     String
+  producto       Producto           @relation(fields: [productoId], references: [id])
+  precioUnitario Decimal            @db.Decimal(12, 2)
+  subtotal       Decimal            @db.Decimal(12, 2)
+
+  @@map("respuesta_items")
+}
+
+// ── Proforma = cotización de VENTA a un Cliente (distinta de Cotizacion/RFQ) ──
+enum EstadoProforma {
+  BORRADOR
+  ENVIADA
+  ACEPTADA
+  RECHAZADA
+  VENCIDA
+}
+
+model Proforma {
+  id               String         @id @default(cuid())
+  empresaId        String
+  empresa          Empresa        @relation(fields: [empresaId], references: [id])
+  numero           String
+  clienteId        String
+  cliente          Cliente        @relation(fields: [clienteId], references: [id])
+  fecha            DateTime       @default(now())
+  fechaVencimiento DateTime?
+  estado           EstadoProforma @default(BORRADOR)
+  subtotal         Decimal        @db.Decimal(12, 2)
+  igv              Decimal        @db.Decimal(12, 2)
+  total            Decimal        @db.Decimal(12, 2)
+  notas            String?
+  createdAt        DateTime       @default(now())
+
+  items ProformaItem[]
+
+  @@unique([empresaId, numero])
+  @@index([empresaId])
+  @@map("proformas")
+}
+
+model ProformaItem {
+  id             String   @id @default(cuid())
+  proformaId     String
+  proforma       Proforma @relation(fields: [proformaId], references: [id], onDelete: Cascade)
+  productoId     String
+  producto       Producto @relation(fields: [productoId], references: [id])
+  descripcion    String?
+  cantidad       Decimal  @db.Decimal(12, 2)
+  precioUnitario Decimal  @db.Decimal(12, 2)
+  subtotal       Decimal  @db.Decimal(12, 2)
+
+  @@map("proforma_items")
+}
+
+// ── Cuentas por Cobrar — despachoId tiene FK real (Fase 5: Despacho ya existe) ──
+enum EstadoCxC {
+  PENDIENTE
+  PARCIAL
+  COBRADA
+  VENCIDA
+}
+
+model CuentaPorCobrar {
+  id               String    @id @default(cuid())
+  empresaId        String
+  empresa          Empresa   @relation(fields: [empresaId], references: [id])
+  numero           String
+  clienteId        String
+  cliente          Cliente   @relation(fields: [clienteId], references: [id])
+  despachoId       String?
+  despacho         Despacho? @relation(fields: [despachoId], references: [id])
+  monto            Decimal   @db.Decimal(12, 2)
+  saldo            Decimal   @db.Decimal(12, 2)
+  fechaEmision     DateTime  @default(now())
+  fechaVencimiento DateTime
+  diasCredito      Int
+  estado           EstadoCxC @default(PENDIENTE)
+  notas            String?
+  createdAt        DateTime  @default(now())
+
+  pagos PagoCxC[]
+
+  @@unique([empresaId, numero])
+  @@index([empresaId])
+  @@map("cuentas_por_cobrar")
+}
+
+// Extensión por necesidad operativa (no documentada): registra el historial
+// de abonos que mueve saldo PENDIENTE -> PARCIAL -> COBRADA de forma auditable.
+model PagoCxC {
+  id       String          @id @default(cuid())
+  cuentaId String
+  cuenta   CuentaPorCobrar @relation(fields: [cuentaId], references: [id], onDelete: Cascade)
+  monto    Decimal         @db.Decimal(12, 2)
+  metodo   String? // efectivo | transferencia | yape | plin | ...
+  fecha    DateTime        @default(now())
+  notas    String?
+
+  @@map("pagos_cxc")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// FASE 5 — Despachos, Transportistas, Rutas, Stock Reservado
+// Agregado en sesión de Fase 5. Igual que Fase 4, "No modelada aún" en el
+// Roadmap — se diseñó auditando validateDespacho() en validators.js y
+// DESPACHOS_DEMO/TRANSPORTISTAS_DEMO/RUTAS_DEMO en demoData.js.
+//
+// Decisiones confirmadas con el usuario:
+//   - Stock Reservado SÍ se construye completo (Inventario.cantidadReservada).
+//   - El Movimiento SALIDA real se genera al pasar a DESPACHADO (no a ENTREGADO).
+//   - Rutas + Transportistas se construyen completos en esta misma fase.
+//
+// Fase 7f agrega Transportista.ruc (usado en la Guía de Remisión Electrónica).
+// ─────────────────────────────────────────────────────────────────
+
+model Transportista {
+  id        String   @id @default(cuid())
+  empresaId String
+  empresa   Empresa  @relation(fields: [empresaId], references: [id])
+  nombre    String
+  tipo      String // PROPIO | TERCERO
+  ruc       String? // Fase 7f — requerido en la GRE como documento del transportista
+  placa     String?
+  vehiculo  String?
+  telefono  String?
+  email     String?
+  licencia  String?
+  activo    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  rutas          Ruta[]
+  despachos      Despacho[]
+  vehiculosFlota VehiculoFlota[]
+
+  @@index([empresaId])
+  @@map("transportistas")
+}
+
+// Máquina de estados (validateDespacho en validators.js + DESPACHOS_DEMO):
+// PEDIDO -> APROBADO -> PICKING -> LISTO -> DESPACHADO -> ENTREGADO
+// (o -> CANCELADO en cualquier punto antes de DESPACHADO).
+enum EstadoDespacho {
+  PEDIDO
+  APROBADO
+  PICKING
+  LISTO
+  DESPACHADO
+  ENTREGADO
+  CANCELADO
+}
+
+model Despacho {
+  id               String         @id @default(cuid())
+  empresaId        String
+  empresa          Empresa        @relation(fields: [empresaId], references: [id])
+  numero           String
+  clienteId        String
+  cliente          Cliente        @relation(fields: [clienteId], references: [id])
+  almacenId        String
+  almacen          Almacen        @relation(fields: [almacenId], references: [id])
+  estado           EstadoDespacho @default(PEDIDO)
+  fecha            DateTime       @default(now())
+  fechaEntrega     DateTime? // entrega ESTIMADA (la pide el cliente)
+  fechaDespacho    DateTime? // se setea al pasar a DESPACHADO (salida real del almacén)
+  fechaEntregado   DateTime? // se setea al pasar a ENTREGADO (confirmación de recepción)
+  subtotal         Decimal        @db.Decimal(12, 2)
+  igv              Decimal        @db.Decimal(12, 2)
+  total            Decimal        @db.Decimal(12, 2)
+  guiaNumero       String?
+  direccionEntrega String?
+  transportistaId  String?
+  transportista    Transportista? @relation(fields: [transportistaId], references: [id])
+  observaciones    String?
+  receptorNombre   String? // quien recibió, capturado al confirmar ENTREGADO
+  evidenciaFoto    String? // foto de evidencia de entrega, data URI base64
+  evidenciaNotas   String? // observaciones de la entrega (estado del producto, incidencias)
+  createdAt        DateTime       @default(now())
+
+  items                   DespachoItem[]
+  paradas                 Parada[]
+  cuentasPorCobrar        CuentaPorCobrar[]
+  empaque                 Empaque?
+  pedidoPortal            PedidoPortal?
+  guiaRemisionElectronica GuiaRemisionElectronica?
+
+  @@unique([empresaId, numero])
+  @@index([empresaId])
+  @@map("despachos")
+}
+
+model DespachoItem {
+  id                String   @id @default(cuid())
+  despachoId        String
+  despacho          Despacho @relation(fields: [despachoId], references: [id], onDelete: Cascade)
+  productoId        String
+  producto          Producto @relation(fields: [productoId], references: [id])
+  cantidad          Decimal  @db.Decimal(12, 2)
+  precioVenta       Decimal  @db.Decimal(12, 2)
+  costoUnitario     Decimal? @db.Decimal(12, 2)
+  subtotal          Decimal  @db.Decimal(12, 2)
+  // Cuánto de `cantidad` sigue reservado en Inventario.cantidadReservada.
+  // Se pone en 0 al despachar (se convierte en Movimiento real) o al cancelar
+  // (se libera sin generar movimiento).
+  cantidadReservada Decimal  @default(0) @db.Decimal(12, 2)
+
+  @@map("despacho_items")
+}
+
+enum EstadoRuta {
+  PROGRAMADA
+  EN_RUTA
+  COMPLETADA
+  CANCELADA
+}
+
+model Ruta {
+  id              String        @id @default(cuid())
+  empresaId       String
+  empresa         Empresa       @relation(fields: [empresaId], references: [id])
+  numero          String
+  transportistaId String
+  transportista   Transportista @relation(fields: [transportistaId], references: [id])
+  almacenId       String?
+  almacen         Almacen?      @relation(fields: [almacenId], references: [id])
+  estado          EstadoRuta    @default(PROGRAMADA)
+  fechaSalida     DateTime
+  fechaRetorno    DateTime?
+  kmRecorrido     Decimal?      @db.Decimal(10, 2)
+  costoViaje      Decimal?      @db.Decimal(12, 2)
+  observaciones   String?
+  createdAt       DateTime      @default(now())
+
+  paradas Parada[]
+
+  @@unique([empresaId, numero])
+  @@index([empresaId])
+  @@map("rutas")
+}
+
+enum EstadoParada {
+  PENDIENTE
+  EN_CAMINO
+  ENTREGADO
+  FALLIDO
+}
+
+model Parada {
+  id          String       @id @default(cuid())
+  rutaId      String
+  ruta        Ruta         @relation(fields: [rutaId], references: [id], onDelete: Cascade)
+  despachoId  String
+  despacho    Despacho     @relation(fields: [despachoId], references: [id])
+  orden       Int // secuencia de entrega dentro de la ruta
+  estado      EstadoParada @default(PENDIENTE)
+  horaLlegada DateTime?
+  horaPartida DateTime?
+  observacion String?
+
+  @@unique([rutaId, despachoId])
+  @@map("paradas")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// FASE 6 — Áreas Internas, Pedidos Internos, Inventario Físico
+// Agregado en sesión de Fase 6. Igual que Fase 4/5, "No modelada aún" en
+// el Roadmap — se diseñó auditando PedidosInternos.jsx e
+// InventarioFisico.jsx reales (no demoData.js, que no tenía estas
+// entidades). Hallazgo: "Notificaciones" del Roadmap NO es una entidad —
+// es un banner derivado (pedidos ENTREGADO && !reciboConfirmado) + un
+// botón que copia un mensaje al portapapeles. No se modela nada para eso.
+//
+// Decisiones confirmadas con el usuario:
+//   - Entregar un Pedido Interno SÍ genera un Movimiento SALIDA real
+//     (el frontend actual NO lo hacía — era un gap real que se corrige aquí).
+//   - InventarioFisico.almacenId es OBLIGATORIO (el frontend viejo lo
+//     dejaba opcional comparando contra Producto.stockActual total, pero
+//     eso ya no es coherente con el stock por almacén que vive en Inventario).
+//   - Usuario.areaId se agregó arriba (ver modelo Usuario) para que el rol
+//     'solicitante' quede atado a su área, igual que en el código real.
+// ─────────────────────────────────────────────────────────────────
+
+model AreaInterna {
+  id        String   @id @default(cuid())
+  empresaId String
+  empresa   Empresa  @relation(fields: [empresaId], references: [id])
+  nombre    String
+  codigo    String
+  activo    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  usuarios        Usuario[]
+  pedidosInternos PedidoInterno[]
+
+  @@unique([empresaId, codigo])
+  @@index([empresaId])
+  @@map("areas_internas")
+}
+
+enum PrioridadPedido {
+  NORMAL
+  URGENTE
+  CRITICO
+}
+
+// Máquina de estados real (PedidosInternos.jsx):
+// BORRADOR -> ENVIADO -> APROBADO -> PICKING -> ENTREGADO
+// (o -> RECHAZADO desde ENVIADO). El solicitante confirma recibo aparte
+// (reciboConfirmado) — no es un estado, es un flag posterior a ENTREGADO.
+enum EstadoPedidoInterno {
+  BORRADOR
+  ENVIADO
+  APROBADO
+  PICKING
+  ENTREGADO
+  RECHAZADO
+}
+
+model PedidoInterno {
+  id                    String              @id @default(cuid())
+  empresaId             String
+  empresa               Empresa             @relation(fields: [empresaId], references: [id])
+  numero                String
+  areaId                String
+  area                  AreaInterna         @relation(fields: [areaId], references: [id])
+  almacenId             String
+  almacen               Almacen             @relation(fields: [almacenId], references: [id])
+  estado                EstadoPedidoInterno @default(BORRADOR)
+  prioridad             PrioridadPedido     @default(NORMAL)
+  fecha                 DateTime            @default(now())
+  fechaRequerida        DateTime?
+  notasSolicitud        String?
+  usuarioSolicitaId     String
+  usuarioSolicita       Usuario             @relation("PedidoSolicitante", fields: [usuarioSolicitaId], references: [id])
+  fechaAprobacion       DateTime?
+  usuarioApruebaId      String?
+  usuarioAprueba        Usuario?            @relation("PedidoAprobador", fields: [usuarioApruebaId], references: [id])
+  notasAprobacion       String?
+  motivoRechazo         String?
+  fechaEntrega          DateTime?
+  usuarioEntregaId      String?
+  usuarioEntrega        Usuario?            @relation("PedidoEntregador", fields: [usuarioEntregaId], references: [id])
+  // Flag posterior a ENTREGADO — el solicitante confirma que recibió el material.
+  reciboConfirmado      Boolean             @default(false)
+  fechaReciboConfirmado DateTime?
+  createdAt             DateTime            @default(now())
+
+  items PedidoInternoItem[]
+
+  @@unique([empresaId, numero])
+  @@index([empresaId])
+  @@map("pedidos_internos")
+}
+
+model PedidoInternoItem {
+  id           String        @id @default(cuid())
+  pedidoId     String
+  pedido       PedidoInterno @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  productoId   String
+  producto     Producto      @relation(fields: [productoId], references: [id])
+  cantidad     Decimal       @db.Decimal(12, 2)
+  unidadMedida String?
+  notas        String?
+
+  @@map("pedido_interno_items")
+}
+
+enum EstadoInventarioFisico {
+  EN_CURSO
+  CERRADO
+}
+
+// Confirma el patrón de Fase 3: al cerrar, cada línea con diferencia
+// genera un Movimiento AJUSTE real (con direccion según el signo) —
+// el código real YA hacía esto (registrarMovimiento tipo AJUSTE), así
+// que esta fase reutiliza el motor existente en vez de duplicar lógica.
+model InventarioFisico {
+  id          String                 @id @default(cuid())
+  empresaId   String
+  empresa     Empresa                @relation(fields: [empresaId], references: [id])
+  numero      String
+  almacenId   String // obligatorio (decisión de Fase 6) — el conteo siempre es de UN almacén
+  almacen     Almacen                @relation(fields: [almacenId], references: [id])
+  categoriaId String?
+  categoria   Categoria?             @relation(fields: [categoriaId], references: [id])
+  estado      EstadoInventarioFisico @default(EN_CURSO)
+  fecha       DateTime               @default(now())
+  fechaCierre DateTime?
+  usuarioId   String
+  usuario     Usuario                @relation(fields: [usuarioId], references: [id])
+  notas       String?
+  createdAt   DateTime               @default(now())
+
+  lineas InventarioFisicoLinea[]
+
+  @@unique([empresaId, numero])
+  @@index([empresaId])
+  @@map("inventarios_fisicos")
+}
+
+model InventarioFisicoLinea {
+  id            String           @id @default(cuid())
+  inventarioId  String
+  inventario    InventarioFisico @relation(fields: [inventarioId], references: [id], onDelete: Cascade)
+  productoId    String
+  producto      Producto         @relation(fields: [productoId], references: [id])
+  stockSistema  Decimal          @db.Decimal(12, 2) // snapshot de Inventario.cantidad al iniciar el conteo
+  stockFisico   Decimal?         @db.Decimal(12, 2)
+  diferencia    Decimal?         @db.Decimal(12, 2)
+  costoUnitario Decimal          @db.Decimal(12, 2) // snapshot de Producto.precioCompra al iniciar
+  ajustado      Boolean          @default(false)
+
+  @@unique([inventarioId, productoId])
+  @@map("inventario_fisico_lineas")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// FASE 7a — Flota (vehículos, mantenimientos, combustible)
+// Agregado en sesión de Fase 7. Hallazgo de código real: Flota.jsx es
+// 100% independiente — usa localStorage directo (sp_flota,
+// sp_combustible), SIN pasar por storage.js como el resto del sistema.
+// Es un dominio nuevo y separable, nunca integrado con Transportista
+// (Fase 5) en el código real pese a la superposición conceptual.
+//
+// Decisiones de diseño (extensiones razonables, no preguntadas
+// explícitamente por ser de bajo riesgo):
+//   - transportistaId es OPCIONAL en VehiculoFlota — vincula con
+//     Transportista (Fase 5) cuando aplica, sin forzarlo.
+//   - "conductor" queda como texto libre (no hay entidad
+//     Conductor/Empleado en el schema).
+//   - Se corrige el patrón de anidar mantenimientos[] dentro del
+//     vehículo (mismo bug ya corregido para Lotes/serials).
+//   - kmActual del vehículo se sincroniza al registrar un
+//     mantenimiento o una carga de combustible con un km mayor.
+// ─────────────────────────────────────────────────────────────────
+
+model VehiculoFlota {
+  id                String         @id @default(cuid())
+  empresaId         String
+  empresa           Empresa        @relation(fields: [empresaId], references: [id])
+  nombre            String
+  tipo              String // Camioneta | Camión | Furgón | Moto | Auto | Bus | Otro (categorización libre)
+  placa             String
+  anio              Int?
+  conductor         String?
+  kmActual          Decimal        @default(0) @db.Decimal(10, 1)
+  vencSoat          DateTime?
+  vencRevTecnica    DateTime?
+  proxMantenimiento DateTime?
+  transportistaId   String?
+  transportista     Transportista? @relation(fields: [transportistaId], references: [id])
+  activo            Boolean        @default(true)
+  createdAt         DateTime       @default(now())
+
+  mantenimientos       MantenimientoVehiculo[]
+  registrosCombustible RegistroCombustible[]
+
+  @@unique([empresaId, placa])
+  @@index([empresaId])
+  @@map("vehiculos_flota")
+}
+
+model MantenimientoVehiculo {
+  id            String        @id @default(cuid())
+  vehiculoId    String
+  vehiculo      VehiculoFlota @relation(fields: [vehiculoId], references: [id], onDelete: Cascade)
+  tipo          String // Cambio de aceite | Afinamiento | Revisión frenos | Cambio de llantas | ...
+  fecha         DateTime      @default(now())
+  kmActual      Decimal?      @db.Decimal(10, 1)
+  costo         Decimal?      @db.Decimal(12, 2)
+  taller        String?
+  observaciones String?
+  usuarioId     String?
+  usuario       Usuario?      @relation(fields: [usuarioId], references: [id])
+  createdAt     DateTime      @default(now())
+
+  @@map("mantenimientos_vehiculo")
+}
+
+model RegistroCombustible {
+  id              String        @id @default(cuid())
+  vehiculoId      String
+  vehiculo        VehiculoFlota @relation(fields: [vehiculoId], references: [id], onDelete: Cascade)
+  fecha           DateTime      @default(now())
+  litros          Decimal       @db.Decimal(10, 2)
+  costo           Decimal       @db.Decimal(12, 2)
+  kmAntes         Decimal?      @db.Decimal(10, 1)
+  kmDespues       Decimal?      @db.Decimal(10, 1)
+  kmRecorridos    Decimal       @default(0) @db.Decimal(10, 1) // calculado y persistido al crear
+  tipoCombustible String? // Diesel | Gasolina 90 | Gasolina 95 | Gas natural | GLP
+  proveedor       String?
+  notas           String?
+  createdAt       DateTime      @default(now())
+
+  @@map("registros_combustible")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// FASE 7c — Empaque
+// Agregado en sesión de Fase 7. Auditado desde Empaque.jsx real.
+// Relación 1:1 con Despacho. "Tipos de caja" son un catálogo FIJO de 8
+// opciones (no una tabla — son datos de referencia estáticos, igual que
+// el frontend real los maneja como constante en memoria, no como
+// colección editable por el tenant). Se expone vía un endpoint de
+// solo lectura en el service (TIPOS_CAJA), no en el schema.
+// La impresión de etiqueta es 100% responsabilidad del frontend
+// (genera el HTML/imprime en el navegador) — no requiere endpoint propio,
+// solo los datos ya disponibles vía GET /despachos/:id y este modelo.
+// ─────────────────────────────────────────────────────────────────
+
+enum EstadoEmpaque {
+  PENDIENTE
+  CONFIRMADO
+}
+
+model Empaque {
+  id            String        @id @default(cuid())
+  despachoId    String        @unique
+  despacho      Despacho      @relation(fields: [despachoId], references: [id], onDelete: Cascade)
+  tipoCajaId    String // referencia al catálogo fijo TIPOS_CAJA (ver EmpaquesService) — no es FK de BD
+  bultos        Int           @default(1)
+  pesoTotal     Decimal?      @db.Decimal(10, 2)
+  instrucciones String?
+  fragil        Boolean       @default(false)
+  estado        EstadoEmpaque @default(PENDIENTE)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@map("empaques")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// FASE 7d — AdminSaaS
+// Agregado en sesión de Fase 7. Auditado desde AdminSaaS.jsx real (6
+// sub-módulos: Negocios, Planes, Renovaciones, Límites, Alertas, Landing).
+//
+// CAMBIO ARQUITECTÓNICO CLAVE: PlatformAdmin tiene su PROPIA autenticación,
+// completamente separada del JWT por tenant (secreto distinto, guard
+// distinto, endpoints bajo /api/admin/*). Nunca se mezcla con Usuario —
+// un PlatformAdmin no pertenece a ninguna Empresa, ve todas a la vez.
+//
+// Estas tablas NUNCA se acceden vía PrismaService.withTenant() — no
+// tienen RLS por tenant (igual que Empresa). El control de acceso es
+// 100% vía PlatformAdminGuard a nivel de ruta, no a nivel de fila de BD.
+//
+// Decisiones confirmadas con el usuario:
+//   - Solo CRUD de límites por plan — SIN enforcement real en los demás
+//     módulos (eso sería un esfuerzo transversal grande, fuera de alcance).
+//   - Landing Page SÍ se incluye, modelada como un único registro JSON
+//     (es contenido de marketing puro, sin lógica de negocio).
+//
+// Decisión de seguridad (no negociable, no se preguntó): el frontend
+// viejo guardaba/mostraba la contraseña del tenant en texto plano. Aquí
+// la contraseña solo se usa UNA VEZ para crear el Usuario admin inicial
+// del nuevo negocio, hasheada con bcrypt — nunca se almacena ni se
+// devuelve en texto plano, igual que el resto del sistema.
+// ─────────────────────────────────────────────────────────────────
+
+model PlatformAdmin {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  nombre       String
+  activo       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  @@map("platform_admins")
+}
+
+// Los "límites por plan" del frontend (TabLimites) se plegaron aquí como
+// campos directos — son 1:1 con cada plan, no amerita una tabla aparte.
+model PlanSaaS {
+  id              String   @id // slug: 'trial' | 'basico' | 'profesional' | 'empresarial' | custom
+  nombre          String
+  descripcion     String?
+  precioMensual   Decimal  @default(0) @db.Decimal(10, 2)
+  precioAnual     Decimal  @default(0) @db.Decimal(10, 2)
+  moneda          String   @default("PEN")
+  color           String   @default("#6366f1")
+  destacado       Boolean  @default(false)
+  activo          Boolean  @default(true)
+  vigenciaDias    Int      @default(30)
+  caracteristicas String[] // lista de features a mostrar al público
+
+  // Fase 1 (segunda tanda) — eje de alcance funcional, además del eje de escala de abajo.
+  // modulosIncluidos usa el mismo vocabulario que Permiso.modulo (ver informe de roles).
+  // esPublico=false permite crear planes a medida por cliente sin ensuciar landing/selector —
+  // Empresa.plan ya es una referencia libre a este id, así que no hace falta tabla nueva.
+  modulosIncluidos String[] @default([])
+  esPublico        Boolean  @default(true)
+
+  // Límites — solo configuración (Fase 7d: sin enforcement, decisión confirmada)
+  maxUsuarios       Int     @default(1) // -1 = ilimitado
+  maxProductos      Int     @default(100)
+  maxAlmacenes      Int     @default(1)
+  maxProveedores    Int     @default(10)
+  maxClientes       Int     @default(20)
+  maxOrdenesMes     Int     @default(50)
+  almacenamientoGB  Int     @default(1)
+  soporte           String  @default("email") // email | prioritario | 24/7
+  apiAccess         Boolean @default(false)
+  multiEmpresa      Boolean @default(false)
+  exportAvanzada    Boolean @default(false)
+  reportesAvanzados Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  renovaciones RenovacionPlan[]
+
+  @@map("planes_saas")
+}
+
+enum EstadoRenovacion {
+  PAGADO
+  PENDIENTE
+  FALLIDO
+  ANULADO
+}
+
+model RenovacionPlan {
+  id            String           @id @default(cuid())
+  empresaId     String
+  empresa       Empresa          @relation(fields: [empresaId], references: [id])
+  planId        String
+  plan          PlanSaaS         @relation(fields: [planId], references: [id])
+  monto         Decimal          @db.Decimal(10, 2)
+  moneda        String           @default("USD")
+  ciclo         String // mensual | anual
+  fechaPago     DateTime         @default(now())
+  metodoPago    String // tarjeta | transferencia | efectivo | paypal | yape
+  periodoInicio DateTime
+  periodoFin    DateTime
+  estado        EstadoRenovacion @default(PAGADO)
+  comprobante   String?
+  createdAt     DateTime         @default(now())
+
+  @@map("renovaciones_plan")
+}
+
+model ReglaAlertaVencimiento {
+  id        String   @id @default(cuid())
+  diasAntes Int
+  activa    Boolean  @default(true)
+  canales   String[] // email | sistema | whatsapp | sms
+  asunto    String
+  mensaje   String
+  createdAt DateTime @default(now())
+
+  @@map("reglas_alerta_vencimiento")
+}
+
+// Config del sitio público de marketing — SIEMPRE una sola fila (singleton).
+// Se modela como JSON porque es contenido de marketing puro (sitio, hero,
+// características, contacto, redes, SEO, footer) sin lógica de negocio
+// que dependa de su estructura interna.
+model LandingConfig {
+  id        String   @id @default(cuid())
+  data      Json
+  updatedAt DateTime @updatedAt
+
+  @@map("landing_config")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// FASE 7e — Portal de Clientes (real, externo) + Facturas B2B (admin-only)
+// Agregado en sesión de Fase 7. Hallazgo clave auditando el código real:
+//
+//   - PortalProveedoresB2B.jsx: la "vista proveedor" es una SIMULACIÓN
+//     dentro del panel admin ("Solo lectura" / botón "Ver portal") —
+//     NO existe una página externa real para que un proveedor entre con
+//     su propio acceso. Por eso FacturaB2B se construye admin-only en
+//     esta fase (CRUD vía JWT de tenant normal).
+//   - PortalPedidos.jsx + PortalPublico.jsx: el portal de CLIENTES SÍ es
+//     real — accesible en /portal/:token sin login de admin. El token
+//     original (btoa(clienteId:ruc)) es INSEGURO (sin firma, adivinable).
+//     Se reemplaza por un JWT firmado de larga duración con su PROPIO
+//     secreto (PORTAL_JWT_SECRET) — tercera identidad de auth del backend
+//     (después de Usuario y PlatformAdmin), nunca mezclada con las otras.
+//
+// Decisión: cuando el admin aprueba un PedidoPortal, se genera un
+// Despacho REAL vía DespachosService.create() (con reserva de stock
+// real) — no el bypass manual que hacía el frontend viejo.
+// ─────────────────────────────────────────────────────────────────
+
+enum EstadoPedidoPortal {
+  NUEVO
+  REVISANDO
+  APROBADO
+  RECHAZADO
+  CONVERTIDO
+}
+
+model PedidoPortal {
+  id                  String             @id @default(cuid())
+  empresaId           String
+  empresa             Empresa            @relation(fields: [empresaId], references: [id])
+  numero              String
+  clienteId           String
+  cliente             Cliente            @relation(fields: [clienteId], references: [id])
+  estado              EstadoPedidoPortal @default(NUEVO)
+  subtotal            Decimal            @db.Decimal(12, 2)
+  igv                 Decimal            @db.Decimal(12, 2)
+  total               Decimal            @db.Decimal(12, 2)
+  observaciones       String?
+  fechaEntregaDeseada DateTime?
+  motivoRechazo       String?
+  despachoId          String?            @unique // se completa al aprobar y convertir en Despacho real
+  despacho            Despacho?          @relation(fields: [despachoId], references: [id])
+  createdAt           DateTime           @default(now())
+
+  items PedidoPortalItem[]
+
+  @@unique([empresaId, numero])
+  @@index([empresaId])
+  @@map("pedidos_portal")
+}
+
+model PedidoPortalItem {
+  id             String       @id @default(cuid())
+  pedidoPortalId String
+  pedidoPortal   PedidoPortal @relation(fields: [pedidoPortalId], references: [id], onDelete: Cascade)
+  productoId     String
+  producto       Producto     @relation(fields: [productoId], references: [id])
+  cantidad       Decimal      @db.Decimal(12, 2)
+  precioUnitario Decimal      @db.Decimal(12, 2) // snapshot de Producto.precioVenta al momento del pedido
+  subtotal       Decimal      @db.Decimal(12, 2)
+
+  @@map("pedido_portal_items")
+}
+
+enum EstadoFacturaB2B {
+  ENVIADA
+  RECIBIDA
+  RECHAZADA
+}
+
+// Admin-only por ahora (ver nota de Fase 7e arriba) — 1:1 con OrdenCompra,
+// igual que el frontend real (tieneFactura = facturas.some(f=>f.ocId===oc.id)).
+model FacturaB2B {
+  id            String           @id @default(cuid())
+  empresaId     String
+  empresa       Empresa          @relation(fields: [empresaId], references: [id])
+  ordenCompraId String           @unique
+  ordenCompra   OrdenCompra      @relation(fields: [ordenCompraId], references: [id])
+  proveedorId   String
+  proveedor     Proveedor        @relation(fields: [proveedorId], references: [id])
+  numero        String
+  fecha         DateTime         @default(now())
+  monto         Decimal?         @db.Decimal(12, 2)
+  notas         String?
+  estado        EstadoFacturaB2B @default(ENVIADA)
+  createdAt     DateTime         @default(now())
+
+  @@index([empresaId])
+  @@map("facturas_b2b")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// FASE 7f — Sunat (Guía de Remisión Electrónica)
+// Agregado en sesión de Fase 7 — ÚLTIMA sub-fase. Hallazgo clave
+// auditando Sunat.jsx real: está explícitamente documentado como
+// "Funcionalidad implementada (sin backend)". NO es facturación
+// electrónica (Facturas/Boletas) — es la Guía de Remisión Electrónica
+// (GRE), el documento de traslado de mercadería ligado a un Despacho.
+// No hay integración real con SUNAT/OSE en el código actual — solo
+// genera el JSON y deja que el usuario marque manualmente el estado
+// (Pendiente→Enviado→Aceptado/Rechazado). No se inventa una integración
+// real con un OSE (Nubefact/Factura.com) que no se puede verificar —
+// se construye exactamente lo mismo que ya existe, ahora con backend real.
+//
+// Por eso NO hay reuso de FactuSaaS: son documentos distintos sin
+// solapamiento (FactuSaaS = Facturas/Boletas de venta; esto = GRE de
+// despacho/logística).
+//
+// El JSON de la GRE NUNCA se persiste como blob — se computa en vivo
+// desde Despacho+Cliente+Producto+Empresa+Transportista (consistente
+// con la filosofía de Reportes en Fase 7b: no guardar lo derivable).
+// Solo se persiste el TRACKING de estado.
+// ─────────────────────────────────────────────────────────────────
+
+enum EstadoDocumentoSunat {
+  PENDIENTE
+  ENVIADO
+  ACEPTADO
+  RECHAZADO
+}
+
+model GuiaRemisionElectronica {
+  id             String               @id @default(cuid())
+  empresaId      String
+  empresa        Empresa              @relation(fields: [empresaId], references: [id])
+  despachoId     String               @unique
+  despacho       Despacho             @relation(fields: [despachoId], references: [id])
+  estado         EstadoDocumentoSunat @default(PENDIENTE)
+  fechaEnvio     DateTime?
+  fechaRespuesta DateTime?
+  cdr            String? // comprobante digital de recepción — para cuando haya integración real con un OSE
+  motivoRechazo  String?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  @@index([empresaId])
+  @@map("guias_remision_electronicas")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// FASE 9 — Listas de Precios (multi-tenant)
+// Migración de sp_listas_precios localStorage al backend.
+// precios: Json = { [productoId]: precioEspecial (número) }
+// ─────────────────────────────────────────────────────────────────
+model ListaPrecios {
+  id        String   @id @default(cuid())
+  empresaId String
+  empresa   Empresa  @relation(fields: [empresaId], references: [id])
+  nombre    String
+  tipo      String   @default("general") // general | mayorista | especial
+  descuento Decimal  @default(0) @db.Decimal(5, 2) // % global de descuento
+  markup    Decimal  @default(0) @db.Decimal(5, 2) // % global de markup
+  activa    Boolean  @default(true)
+  precios   Json     @default("{}") // { productoId: precioEspecial }
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([empresaId])
+  @@map("listas_precios")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// NOTA TÉCNICA — Row-Level Security (defensa en profundidad multi-tenant)
+// Prisma no expresa políticas RLS en el schema; se agregan con SQL crudo
+// dentro de una migración (npx prisma migrate dev --create-only), ej.:
+//
+//   ALTER TABLE productos ENABLE ROW LEVEL SECURITY;
+//   CREATE POLICY tenant_isolation ON productos
+//     USING (empresa_id = current_setting('app.current_tenant')::text);
+//
+// Esto evita que un bug en el WHERE de una query filtre datos de otro
+// tenant — el motor lo bloquea aunque la app olvide el filtro. Se
+// implementa en la Fase 1 junto con el middleware que setea
+// app.current_tenant por request (vía SET LOCAL en cada transacción).
+//
+// NOTA: las tablas de Fase 7d (PlatformAdmin, PlanSaaS, RenovacionPlan,
+// ReglaAlertaVencimiento, LandingConfig) NO llevan RLS — nunca se
+// acceden vía withTenant(), solo vía PlatformAdminGuard a nivel de ruta.
+// Las tablas de Fase 7e (PedidoPortal, PedidoPortalItem, FacturaB2B) y
+// Fase 7f (GuiaRemisionElectronica) SÍ llevan RLS normal.
+// ─────────────────────────────────────────────────────────────────
