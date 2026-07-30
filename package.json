@@ -14,6 +14,7 @@
     "prisma:studio": "prisma studio",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "lint": "eslint \"{src,prisma}/**/*.ts\""
   },
   "prisma": {
