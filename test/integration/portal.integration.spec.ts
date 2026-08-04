@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { JwtService } from '@nestjs/jwt';
 import { DespachosService } from '../../src/despachos/despachos.service';
 import { MovimientosService } from '../../src/movimientos/movimientos.service';
+import { PickingService } from '../../src/picking/picking.service';
 import { PortalService } from '../../src/portal/portal.service';
 import { dbOwner, nuevoPrismaService, crearFixtureEmpresa, limpiarFixtureEmpresa } from './setup';
 
@@ -28,7 +29,7 @@ describe('PortalService.aprobarYConvertir (integración, Postgres real)', () => 
   beforeAll(async () => {
     prisma = nuevoPrismaService();
     await prisma.$connect();
-    const despachosService = new DespachosService(prisma, new MovimientosService(prisma));
+    const despachosService = new DespachosService(prisma, new MovimientosService(prisma), new PickingService(prisma));
     portalService = new PortalService(prisma, new JwtService(), despachosService);
     fx = await crearFixtureEmpresa('portal');
   });

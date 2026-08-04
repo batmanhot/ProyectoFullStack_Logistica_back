@@ -5,7 +5,6 @@ import { ValidationPipe } from '@nestjs/common';
 import fastifyHelmet from '@fastify/helmet';
 import { AppModule } from './app.module';
 import { ResponseEnvelopeInterceptor } from './common/interceptors/response-envelope.interceptor';
-import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { validateJwtSecrets } from './common/utils/validate-secrets.util';
 
 async function bootstrap() {
@@ -41,8 +40,9 @@ async function bootstrap() {
   app.setGlobalPrefix('api');
 
   // Contrato de API obligatorio: { data, error } en TODAS las rutas (sección 6.1).
+  // HttpExceptionFilter ahora se registra como APP_FILTER en IncidenciasModule
+  // (necesita inyección de IncidenciasService para persistir cada 500).
   app.useGlobalInterceptors(new ResponseEnvelopeInterceptor());
-  app.useGlobalFilters(new HttpExceptionFilter());
 
   // Reglas de negocio declarativas vía DTOs (sección 5/12.6 de la especificación).
   app.useGlobalPipes(

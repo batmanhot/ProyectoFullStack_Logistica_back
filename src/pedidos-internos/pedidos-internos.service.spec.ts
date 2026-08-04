@@ -37,6 +37,40 @@ describe('PedidosInternosService', () => {
         expect.objectContaining({ where: expect.objectContaining({ areaId: 'area-1', estado: 'ENVIADO' }) }),
       );
     });
+
+    it('incluye los nombres de solicitante/aprobador/entregador para el timeline de trazabilidad', async () => {
+      const txMock = { pedidoInterno: { findMany: vi.fn().mockResolvedValue([]) } };
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(txMock));
+      await service.findAll('e1');
+      expect(txMock.pedidoInterno.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            usuarioSolicita: { select: { nombre: true } },
+            usuarioAprueba: { select: { nombre: true } },
+            usuarioEntrega: { select: { nombre: true } },
+          }),
+        }),
+      );
+    });
+  });
+
+  // ── productosDisponibles ───────────────────────────────────────────────────
+  describe('productosDisponibles', () => {
+    it('devuelve solo id/sku/nombre/unidadMedida de productos activos', async () => {
+      const productos = [{ id: 'p1', sku: 'SKU-1', nombre: 'Producto 1', unidadMedida: 'UND' }];
+      const txMock = { producto: { findMany: vi.fn().mockResolvedValue(productos) } };
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(txMock));
+
+      const r = await service.productosDisponibles('e1');
+
+      expect(txMock.producto.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { empresaId: 'e1', estado: 'Activo' },
+          select: { id: true, sku: true, nombre: true, unidadMedida: true },
+        }),
+      );
+      expect(r).toEqual(productos);
+    });
   });
 
   // ── findOne ────────────────────────────────────────────────────────────────
@@ -114,12 +148,15 @@ describe('PedidosInternosService', () => {
       await expect(service.enviar('e1', 'p1')).rejects.toThrow(ForbiddenException);
     });
 
-    it('enviar() avanza a ENVIADO desde BORRADOR', async () => {
+    it('enviar() avanza a ENVIADO desde BORRADOR y registra fechaEnvio', async () => {
       vi.spyOn(service, 'findOne').mockResolvedValue(PEDIDO_BASE as any);
       const txUpdate = { pedidoInterno: { update: vi.fn().mockResolvedValue({ ...PEDIDO_BASE, estado: 'ENVIADO' }) } };
       prisma.withTenant.mockImplementationOnce((_e: string, fn: any) => fn(txUpdate));
       const r = await service.enviar('e1', 'p1');
       expect(r.estado).toBe('ENVIADO');
+      expect(txUpdate.pedidoInterno.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ estado: 'ENVIADO', fechaEnvio: expect.any(Date) }) }),
+      );
     });
 
     it('aprobar() rechaza si no está en ENVIADO', async () => {
@@ -148,7 +185,11 @@ describe('PedidosInternosService', () => {
       prisma.withTenant.mockImplementationOnce((_e: string, fn: any) => fn(txUpdate));
       await service.rechazar('e1', 'p1', 'usr-admin', { motivo: 'Sin presupuesto' });
       expect(txUpdate.pedidoInterno.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ estado: 'RECHAZADO', motivoRechazo: 'Sin presupuesto' }) }),
+        expect.objectContaining({
+          data: expect.objectContaining({
+            estado: 'RECHAZADO', motivoRechazo: 'Sin presupuesto', fechaRechazo: expect.any(Date),
+          }),
+        }),
       );
     });
 
@@ -157,12 +198,15 @@ describe('PedidosInternosService', () => {
       await expect(service.marcarPicking('e1', 'p1')).rejects.toThrow(ForbiddenException);
     });
 
-    it('marcarPicking() avanza a PICKING desde APROBADO', async () => {
+    it('marcarPicking() avanza a PICKING desde APROBADO y registra fechaPicking', async () => {
       vi.spyOn(service, 'findOne').mockResolvedValue({ ...PEDIDO_BASE, estado: 'APROBADO' } as any);
       const txUpdate = { pedidoInterno: { update: vi.fn().mockResolvedValue({ ...PEDIDO_BASE, estado: 'PICKING' }) } };
       prisma.withTenant.mockImplementationOnce((_e: string, fn: any) => fn(txUpdate));
       const r = await service.marcarPicking('e1', 'p1');
       expect(r.estado).toBe('PICKING');
+      expect(txUpdate.pedidoInterno.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ estado: 'PICKING', fechaPicking: expect.any(Date) }) }),
+      );
     });
   });
 

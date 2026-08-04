@@ -10,7 +10,8 @@ export class AuditoriaController {
 
   /**
    * GET /api/auditoria
-   * Parámetros opcionales: busqueda, accion, modulo, usuarioId, desde (YYYY-MM-DD), hasta (YYYY-MM-DD)
+   * Parámetros opcionales: busqueda, accion, modulo, usuarioId, desde (YYYY-MM-DD), hasta (YYYY-MM-DD),
+   * page (1-based), pageSize.
    */
   @Get()
   findAll(
@@ -21,8 +22,14 @@ export class AuditoriaController {
     @Query('usuarioId') usuarioId?: string,
     @Query('desde')     desde?: string,
     @Query('hasta')     hasta?: string,
+    @Query('page')      page?: string,
+    @Query('pageSize')  pageSize?: string,
   ) {
-    return this.auditoriaService.findAll(empresaId, { busqueda, accion, modulo, usuarioId, desde, hasta });
+    return this.auditoriaService.findAll(
+      empresaId,
+      { busqueda, accion, modulo, usuarioId, desde, hasta },
+      { page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined },
+    );
   }
 
   /**

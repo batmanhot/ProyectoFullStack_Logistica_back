@@ -1,17 +1,28 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DespachosService } from '../../src/despachos/despachos.service';
 import { MovimientosService } from '../../src/movimientos/movimientos.service';
+import { PickingService } from '../../src/picking/picking.service';
 import { dbOwner, nuevoPrismaService, crearFixtureEmpresa, limpiarFixtureEmpresa } from './setup';
 
 describe('DespachosService (integración, Postgres real)', () => {
   let prisma: ReturnType<typeof nuevoPrismaService>;
   let service: DespachosService;
+  let picking: PickingService;
   let fx: Awaited<ReturnType<typeof crearFixtureEmpresa>>;
+
+  /** Confirma el picking del 100% de las líneas — requisito de marcarListo() desde el módulo de Picking. */
+  async function completarPicking(despachoId: string) {
+    const lista = await picking.findByDespacho(fx.empresaId, despachoId);
+    for (const linea of lista!.lineas) {
+      await picking.confirmarLinea(fx.empresaId, despachoId, linea.id, { cantidad: Number(linea.cantidadRequerida) });
+    }
+  }
 
   beforeAll(async () => {
     prisma = nuevoPrismaService();
     await prisma.$connect();
-    service = new DespachosService(prisma, new MovimientosService(prisma));
+    picking = new PickingService(prisma);
+    service = new DespachosService(prisma, new MovimientosService(prisma), picking);
     fx = await crearFixtureEmpresa('desp');
   });
 
@@ -53,6 +64,7 @@ describe('DespachosService (integración, Postgres real)', () => {
 
     await service.aprobar(fx.empresaId, despacho.id);
     await service.iniciarPicking(fx.empresaId, despacho.id);
+    await completarPicking(despacho.id);
     await service.marcarListo(fx.empresaId, despacho.id);
     const despachado = await service.despachar(fx.empresaId, despacho.id, {} as any);
 
@@ -67,5 +79,25 @@ describe('DespachosService (integración, Postgres real)', () => {
     });
     expect(movimiento).not.toBeNull();
     expect(Number(movimiento!.cantidad)).toBe(5);
+  });
+
+  it('marcarListo() rechaza mientras la ListaPicking generada al iniciar picking no esté completa', async () => {
+    const despacho = await service.create(fx.empresaId, {
+      clienteId: fx.clienteId,
+      almacenId: fx.almacenId,
+      items: [{ productoId: fx.productoId, cantidad: 2, precioVenta: 100 }],
+    } as any);
+    await service.aprobar(fx.empresaId, despacho.id);
+    await service.iniciarPicking(fx.empresaId, despacho.id);
+
+    const lista = await picking.findByDespacho(fx.empresaId, despacho.id);
+    expect(lista!.lineas).toHaveLength(1);
+    expect(lista!.lineas[0].estado).toBe('PENDIENTE');
+
+    await expect(service.marcarListo(fx.empresaId, despacho.id)).rejects.toThrow(/líneas de picking sin completar/);
+
+    await completarPicking(despacho.id);
+    const listo = await service.marcarListo(fx.empresaId, despacho.id);
+    expect(listo.estado).toBe('LISTO');
   });
 });

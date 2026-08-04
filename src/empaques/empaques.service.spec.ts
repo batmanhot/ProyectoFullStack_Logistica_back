@@ -68,6 +68,8 @@ describe('EmpaquesService', () => {
           update: vi.fn().mockResolvedValue({ id: 'emp-1', estado: 'CONFIRMADO' }),
           create: vi.fn(),
         },
+        listaPicking: { findFirst: vi.fn().mockResolvedValue(null) },
+        despacho: { update: vi.fn() },
       };
       prismaMock.withTenant
         .mockResolvedValueOnce({ id: 'd1', estado: 'PICKING' })
@@ -79,6 +81,50 @@ describe('EmpaquesService', () => {
         expect.objectContaining({ where: { id: 'emp-1' } }),
       );
       expect(txMock.empaque.create).not.toHaveBeenCalled();
+      // El despacho no tiene lista de picking en este caso — no hay avance automático.
+      expect(txMock.despacho.update).not.toHaveBeenCalled();
+    });
+
+    it('avanza el despacho a LISTO automáticamente si el picking ya estaba 100% completo al confirmar el empaque', async () => {
+      const txMock = {
+        empaque: {
+          findFirst: vi.fn().mockResolvedValue({ id: 'emp-1' }),
+          update: vi.fn().mockResolvedValue({ id: 'emp-1', estado: 'CONFIRMADO' }),
+          create: vi.fn(),
+        },
+        listaPicking: {
+          findFirst: vi.fn().mockResolvedValue({ id: 'lp1', lineas: [{ estado: 'COMPLETA' }, { estado: 'COMPLETA' }] }),
+        },
+        despacho: { update: vi.fn().mockResolvedValue({}) },
+      };
+      prismaMock.withTenant
+        .mockResolvedValueOnce({ id: 'd1', estado: 'PICKING' })
+        .mockImplementationOnce((_e: string, fn: any) => fn(txMock));
+
+      await service.upsert('e1', 'd1', { tipoCajaId: 'c5', confirmar: true } as any);
+
+      expect(txMock.despacho.update).toHaveBeenCalledWith({ where: { id: 'd1' }, data: { estado: 'LISTO' } });
+    });
+
+    it('no avanza a LISTO si el picking todavía tiene líneas sin completar', async () => {
+      const txMock = {
+        empaque: {
+          findFirst: vi.fn().mockResolvedValue({ id: 'emp-1' }),
+          update: vi.fn().mockResolvedValue({ id: 'emp-1', estado: 'CONFIRMADO' }),
+          create: vi.fn(),
+        },
+        listaPicking: {
+          findFirst: vi.fn().mockResolvedValue({ id: 'lp1', lineas: [{ estado: 'COMPLETA' }, { estado: 'PARCIAL' }] }),
+        },
+        despacho: { update: vi.fn() },
+      };
+      prismaMock.withTenant
+        .mockResolvedValueOnce({ id: 'd1', estado: 'PICKING' })
+        .mockImplementationOnce((_e: string, fn: any) => fn(txMock));
+
+      await service.upsert('e1', 'd1', { tipoCajaId: 'c5', confirmar: true } as any);
+
+      expect(txMock.despacho.update).not.toHaveBeenCalled();
     });
   });
 

@@ -11,15 +11,37 @@ describe('AuditoriaService', () => {
   });
 
   describe('findAll', () => {
-    it('llama withTenant y devuelve array de registros', async () => {
+    function mockTx(logs: any[], usuarios: { usuarioId: string | null }[] = []) {
+      return {
+        auditoria: {
+          findMany: vi.fn()
+            .mockResolvedValueOnce(logs) // página pedida
+            .mockResolvedValueOnce(usuarios), // distinct usuarioId (kpi "usuarios")
+          count: vi.fn().mockResolvedValue(logs.length),
+        },
+      };
+    }
+
+    it('llama withTenant, pagina con skip/take y devuelve data + total + kpis', async () => {
       const logs = [{ id: 'a1', accion: 'CREAR', modulo: 'Productos' }];
-      prisma.withTenant.mockResolvedValue(logs);
-      const r = await service.findAll('e1');
-      expect(r).toEqual(logs);
+      const txMock = mockTx(logs, [{ usuarioId: 'u1' }]);
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(txMock));
+
+      const r = await service.findAll('e1', {}, { page: 2, pageSize: 10 });
+
+      expect(txMock.auditoria.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ skip: 10, take: 10 }),
+      );
+      expect(r.data).toEqual(logs);
+      expect(r.page).toBe(2);
+      expect(r.pageSize).toBe(10);
+      expect(r.kpis.usuarios).toBe(1);
     });
 
     it('acepta filtros opcionales sin lanzar error', async () => {
-      prisma.withTenant.mockResolvedValue([]);
+      const txMock = mockTx([]);
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(txMock));
+
       const r = await service.findAll('e1', {
         accion: 'EDITAR',
         modulo: 'Clientes',
@@ -27,7 +49,7 @@ describe('AuditoriaService', () => {
         desde: '2025-01-01',
         hasta: '2025-12-31',
       });
-      expect(Array.isArray(r)).toBe(true);
+      expect(Array.isArray(r.data)).toBe(true);
     });
   });
 

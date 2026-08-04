@@ -88,6 +88,9 @@ export class DatosService {
     await tx.producto.deleteMany({ where: { empresaId } });
     await tx.proveedor.deleteMany({ where: { empresaId } });
     await tx.auditoria.deleteMany({ where: { empresaId } });
+    // ListaPicking/LineaPicking no necesitan deleteMany propio: cascadean
+    // desde Despacho (onDelete: Cascade), ya borrado en el Nivel 2 de arriba.
+    await tx.registroIncidencia.deleteMany({ where: { empresaId } });
   }
 
   // ── Seed de datos demo — dataset mínimo (cualquier tenant que no sea dlnorte) ──
@@ -504,9 +507,12 @@ export class DatosService {
     });
 
     // ══════════════════════════════════════════════════════════════════════
-    // DESPACHOS (12) — cubre los 7 estados de EstadoDespacho + alimenta
-    // Rutas/CxC/SUNAT abajo. Solo los DESPACHADO/ENTREGADO consumen stock
-    // real (Movimiento SALIDA); PEDIDO/APROBADO/PICKING/LISTO solo reservan.
+    // DESPACHOS (13) — cubre los 7 estados de EstadoDespacho + alimenta
+    // Rutas/CxC/SUNAT/Picking abajo. Solo los DESPACHADO/ENTREGADO consumen
+    // stock real (Movimiento SALIDA); PEDIDO/APROBADO/PICKING/LISTO solo reservan.
+    // DESP-00013 es un segundo caso PICKING (además de DESP-00003) para
+    // poder mostrar una lista PENDIENTE sin tocar el DESP-00003 existente,
+    // que varios e2e/tests ya referencian en su estado original.
     // ══════════════════════════════════════════════════════════════════════
     async function reservar(productoId: string, almacenId: string, cantidad: number) {
       const inv = await tx.inventario.findFirst({ where: { productoId, almacenId, ubicacionId: null } });
@@ -548,7 +554,7 @@ export class DatosService {
     // DESP-00003 PICKING — reserva OFI-001 (OK, stock amplio)
     const d3Subtotal = 50 * 18;
     const d3Igv = Math.round(d3Subtotal * 0.18 * 100) / 100;
-    await tx.despacho.create({
+    const desp3 = await tx.despacho.create({
       data: {
         empresaId, numero: 'DESP-00003', clienteId: cliAndes.id, almacenId: almCentral.id, estado: 'PICKING',
         subtotal: d3Subtotal, igv: d3Igv, total: d3Subtotal + d3Igv,
@@ -572,7 +578,7 @@ export class DatosService {
     // una Ruta), a propósito sin guiaNumero: ejercita el botón "Asignar guía".
     const d5Subtotal = 8 * 95;
     const d5Igv = Math.round(d5Subtotal * 0.18 * 100) / 100;
-    await tx.despacho.create({
+    const desp5 = await tx.despacho.create({
       data: {
         empresaId, numero: 'DESP-00005', clienteId: cliPacifico.id, almacenId: almCentral.id, estado: 'DESPACHADO',
         subtotal: d5Subtotal, igv: d5Igv, total: d5Subtotal + d5Igv, fechaDespacho: ahora,
@@ -672,6 +678,72 @@ export class DatosService {
       },
     });
     await reservar(limpLejia.id, almCentral.id, 10);
+
+    // ══════════════════════════════════════════════════════════════════════
+    // PICKING — módulo nuevo (2026-07-31, docs/PROPUESTA-MODULO-PICKING.md).
+    // En producción, ListaPicking se genera automáticamente al entrar a
+    // PICKING (DespachosService.iniciarPicking); acá se siembra a mano
+    // porque los despachos de arriba nacen directo en su estado final.
+    // Cubre los 3 EstadoListaPicking + una línea PARCIAL (trabajo a medias).
+    // ══════════════════════════════════════════════════════════════════════
+
+    // DESP-00013 PICKING (nuevo) — lista recién generada, sin asignar ni
+    // empezar: el caso más común al entrar a Picking desde la UI.
+    const d13Subtotal = 25 * 27 + 15 * 69;
+    const d13Igv = Math.round(d13Subtotal * 0.18 * 100) / 100;
+    const desp13 = await tx.despacho.create({
+      data: {
+        empresaId, numero: 'DESP-00013', clienteId: cliConstructor.id, almacenId: almCentral.id, estado: 'PICKING',
+        subtotal: d13Subtotal, igv: d13Igv, total: d13Subtotal + d13Igv,
+        items: { create: [
+          { productoId: ofiPostit.id,    cantidad: 25, precioVenta: 27, costoUnitario: 18, subtotal: 675,  cantidadReservada: 25 },
+          { productoId: elecCargador.id, cantidad: 15, precioVenta: 69, costoUnitario: 45, subtotal: 1035, cantidadReservada: 15 },
+        ] },
+      },
+    });
+    await Promise.all([reservar(ofiPostit.id, almCentral.id, 25), reservar(elecCargador.id, almCentral.id, 15)]);
+    await tx.listaPicking.create({
+      data: {
+        empresaId, despachoId: desp13.id,
+        lineas: { create: [
+          { productoId: ofiPostit.id,    cantidadRequerida: 25 },
+          { productoId: elecCargador.id, cantidadRequerida: 15 },
+        ] },
+      },
+    });
+
+    // DESP-00003 PICKING — lista EN_PROCESO: 30 de 50 ya pickeados (línea
+    // PARCIAL). El despacho no puede pasar a LISTO hasta completar la línea
+    // (PickingService.assertCompleta) — sin picking parcial a nivel despacho.
+    await tx.listaPicking.create({
+      data: {
+        empresaId, despachoId: desp3.id, estado: 'EN_PROCESO', usuarioAsignadoId: usrAlmacenero?.id, fechaInicio: dias(-0.2),
+        lineas: { create: [{ productoId: ofiResma.id, cantidadRequerida: 50, cantidadPickeada: 30, estado: 'PARCIAL' }] },
+      },
+    });
+
+    // Listas COMPLETADAS — despachos que ya avanzaron más allá de Picking
+    // (LISTO/DESPACHADO/ENTREGADO): la trazabilidad de picking ya cerrada.
+    const listasCompletas: Array<{ despachoId: string; items: Array<{ productoId: string; cantidad: number }>; inicio: Date; fin: Date }> = [
+      { despachoId: desp5.id,  items: [{ productoId: elecTeclado.id,        cantidad: 8  }],                                                     inicio: dias(-1.3), fin: dias(-1.1) },
+      { despachoId: desp6.id,  items: [{ productoId: elecCargador.id,       cantidad: 10 }],                                                     inicio: dias(-0.5), fin: dias(-0.3) },
+      { despachoId: desp7.id,  items: [{ productoId: ofiGrapadora.id,       cantidad: 5  }],                                                     inicio: dias(-0.5), fin: dias(-0.3) },
+      { despachoId: desp8.id,  items: [{ productoId: elecLaptop.id, cantidad: 2 }, { productoId: elecMouse.id, cantidad: 10 }],                   inicio: dias(-1.3), fin: dias(-1.1) },
+      { despachoId: desp9.id,  items: [{ productoId: ofiResma.id,           cantidad: 30 }],                                                     inicio: dias(-1.3), fin: dias(-1.1) },
+      { despachoId: desp10.id, items: [{ productoId: limpDesinfectante.id,  cantidad: 15 }],                                                     inicio: dias(-1.3), fin: dias(-1.1) },
+      { despachoId: desp11.id, items: [{ productoId: elecSSD.id, cantidad: 5 }, { productoId: ofiLapicero.id, cantidad: 20 }],                    inicio: dias(-3.3), fin: dias(-3.1) },
+      { despachoId: desp12.id, items: [{ productoId: limpLejia.id,          cantidad: 10 }],                                                     inicio: dias(-0.5), fin: dias(-0.2) },
+    ];
+    for (const { despachoId, items, inicio, fin } of listasCompletas) {
+      await tx.listaPicking.create({
+        data: {
+          empresaId, despachoId, estado: 'COMPLETADA', usuarioAsignadoId: usrAlmacenero?.id, fechaInicio: inicio, fechaFin: fin,
+          lineas: { create: items.map(({ productoId, cantidad }) => ({
+            productoId, cantidadRequerida: cantidad, cantidadPickeada: cantidad, estado: 'COMPLETA' as const,
+          })) },
+        },
+      });
+    }
 
     // ══════════════════════════════════════════════════════════════════════
     // RUTAS (4 — una por cada EstadoRuta)
@@ -833,6 +905,82 @@ export class DatosService {
           items: { create: [{ productoId: elecMonitor.id, cantidad: 2 }] } },
       });
     }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // REGISTRO DE INCIDENCIAS (7) — módulo nuevo (2026-07-31). Simula errores
+    // reales que HttpExceptionFilter habría capturado y persistido, con
+    // variedad de severidad/módulo/estado para que el panel no se vea vacío
+    // en la demo. usuarioNombre replica lo que arma el filtro real (email,
+    // no nombre — ver http-exception.filter.ts).
+    // ══════════════════════════════════════════════════════════════════════
+    await Promise.all([
+      tx.registroIncidencia.create({
+        data: {
+          empresaId, usuarioId: usrAdmin?.id, usuarioNombre: usrAdmin?.email, modulo: 'despachos',
+          opcion: 'POST /api/despachos', codigoError: 500, severidad: 'CRITICO',
+          mensaje: 'Connection timeout to database',
+          stackTrace: 'PrismaClientKnownRequestError: Connection timeout\n    at PrismaClient._request (prisma-client)\n    at DespachosService.create (despachos.service.ts:88)',
+          contexto: { body: { clienteId: cliNorte.id, almacenId: almCentral.id }, query: {} },
+          timestamp: dias(-4),
+        },
+      }),
+      tx.registroIncidencia.create({
+        data: {
+          empresaId, usuarioId: usrAlmacenero?.id, usuarioNombre: usrAlmacenero?.email, modulo: 'picking',
+          opcion: 'PATCH /api/despachos/DESP-00003/picking/lin-x/confirmar', codigoError: 500, severidad: 'ALTO',
+          mensaje: 'Invalid `tx.lineaPicking.update()` invocation: Record to update not found.',
+          stackTrace: 'PrismaClientKnownRequestError: \n    at PickingService.confirmarLinea (picking.service.ts:115)',
+          contexto: { body: { cantidad: 30 }, query: {} },
+          timestamp: dias(-2),
+        },
+      }),
+      tx.registroIncidencia.create({
+        data: {
+          empresaId, usuarioId: usrAdmin?.id, usuarioNombre: usrAdmin?.email, modulo: 'productos',
+          opcion: 'PUT /api/productos/elec-005', codigoError: 500, severidad: 'ALTO',
+          mensaje: "Cannot read properties of null (reading 'precioVenta')",
+          contexto: { body: { precioVenta: null }, query: {} },
+          resuelto: true, notaResolucion: 'Se agregó validación en el DTO para rechazar precioVenta nulo antes de llegar al service.',
+          timestamp: dias(-6),
+        },
+      }),
+      tx.registroIncidencia.create({
+        data: {
+          empresaId, usuarioId: usrAdmin?.id, usuarioNombre: usrAdmin?.email, modulo: 'reportes',
+          opcion: 'GET /api/reportes/financiero', codigoError: 500, severidad: 'MEDIO',
+          mensaje: 'Unexpected token u in JSON at position 0',
+          contexto: { query: { desde: '2026-01-01', hasta: '2026-07-31' } },
+          timestamp: dias(-1),
+        },
+      }),
+      tx.registroIncidencia.create({
+        data: {
+          empresaId, usuarioId: usrAdmin?.id, usuarioNombre: usrAdmin?.email, modulo: 'sunat',
+          opcion: 'POST /api/sunat/DESP-00009/enviar', codigoError: 500, severidad: 'CRITICO',
+          mensaje: 'ECONNREFUSED — no se pudo conectar al servicio de SUNAT',
+          resuelto: true, notaResolucion: 'Certificado digital vencido — se renovó y quedó operativo.',
+          timestamp: dias(-10),
+        },
+      }),
+      tx.registroIncidencia.create({
+        data: {
+          empresaId, usuarioId: usrAlmacenero?.id, usuarioNombre: usrAlmacenero?.email, modulo: 'configuracion',
+          opcion: 'PATCH /api/configuracion', codigoError: 500, severidad: 'BAJO',
+          mensaje: 'Cannot convert undefined or null to object',
+          resuelto: true, notaResolucion: 'Campo opcional mal inicializado en el frontend — no afectaba datos guardados.',
+          timestamp: dias(-8),
+        },
+      }),
+      tx.registroIncidencia.create({
+        data: {
+          empresaId, usuarioId: usrAdmin?.id, usuarioNombre: usrAdmin?.email, modulo: 'inventario',
+          opcion: 'POST /api/inventario/ajustes', codigoError: 500, severidad: 'MEDIO',
+          mensaje: 'Invalid `tx.inventario.update()` invocation: An operation failed because it depends on one or more records that were required but not found.',
+          contexto: { body: { productoId: elecMonitor.id, almacenId: almCentral.id, cantidad: -5 } },
+          timestamp: dias(-3),
+        },
+      }),
+    ]);
 
     // ── Sincronizar Producto.stockActual ────────────────────────────────────
     // Campo cacheado en Producto que algunas pantallas leen directo (ej.

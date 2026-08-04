@@ -1,5 +1,5 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { EstadoDespacho } from '@prisma/client';
+import { EstadoDespacho, PrismaClient } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpsertEmpaqueDto } from './dto/upsert-empaque.dto';
 import { TIPOS_CAJA } from './tipos-caja.constant';
@@ -75,20 +75,38 @@ export class EmpaquesService {
 
     return this.prisma.withTenant(empresaId, async (tx) => {
       const existente = await tx.empaque.findFirst({ where: { despachoId } });
+      const confirmado = dto.confirmar ?? false;
       const data = {
         tipoCajaId: dto.tipoCajaId,
         bultos: dto.bultos ?? 1,
         pesoTotal: dto.pesoTotal,
         instrucciones: dto.instrucciones,
         fragil: dto.fragil ?? false,
-        estado: dto.confirmar ? ('CONFIRMADO' as const) : ('PENDIENTE' as const),
+        estado: confirmado ? ('CONFIRMADO' as const) : ('PENDIENTE' as const),
       };
 
-      if (existente) {
-        return tx.empaque.update({ where: { id: existente.id }, data });
+      const empaque = existente
+        ? await tx.empaque.update({ where: { id: existente.id }, data })
+        : await tx.empaque.create({ data: { despachoId, ...data } });
+
+      // Simétrico a PickingService.confirmarLinea(): si al confirmar el
+      // empaque el picking ya estaba 100% completo, avanza el despacho a
+      // LISTO sin esperar el clic manual "Marcar Listo" — cualquiera de las
+      // dos condiciones (empaque, picking) puede llegar primero.
+      if (confirmado && despacho.estado === 'PICKING') {
+        await this.avanzarSiPickingCompleto(tx, despachoId);
       }
-      return tx.empaque.create({ data: { despachoId, ...data } });
+
+      return empaque;
     });
+  }
+
+  private async avanzarSiPickingCompleto(tx: PrismaClient, despachoId: string) {
+    const lista = await tx.listaPicking.findFirst({ where: { despachoId }, include: { lineas: true } });
+    const completo = !!lista && lista.lineas.length > 0 && lista.lineas.every((l) => l.estado === 'COMPLETA');
+    if (completo) {
+      await tx.despacho.update({ where: { id: despachoId }, data: { estado: 'LISTO' } });
+    }
   }
 
   private validarDespacho(empresaId: string, despachoId: string) {

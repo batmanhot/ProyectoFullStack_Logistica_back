@@ -28,7 +28,9 @@ export const PERMISO_A_GRUPO_PLAN: Record<string, string | undefined> = {
   clientes: 'despachos',
   despachos: 'despachos',
   'pedidos-internos': 'despachos',
+  'portal-pedidos': 'despachos',
   empaque: 'despachos',
+  picking: 'despachos',
 
   transportes: 'transporte',
   flota: 'transporte',
@@ -41,7 +43,6 @@ export const PERMISO_A_GRUPO_PLAN: Record<string, string | undefined> = {
 
   proformas: 'ventas',
   cxc: 'ventas',
-  'portal-pedidos': 'ventas',
   'lista-precios': 'ventas',
 
   // Add-on de solo lectura para el rol Auditor — grupo propio, no reutiliza

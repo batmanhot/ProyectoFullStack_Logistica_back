@@ -14,12 +14,17 @@ const DESPACHO_BASE = {
 describe('DespachosService', () => {
   let prisma: any;
   let movimientosMock: any;
+  let pickingMock: any;
   let service: DespachosService;
 
   beforeEach(() => {
     prisma = { withTenant: vi.fn() };
     movimientosMock = { crearEnTransaccion: vi.fn().mockResolvedValue({}) };
-    service = new DespachosService(prisma, movimientosMock);
+    pickingMock = {
+      generarListaEnTransaccion: vi.fn().mockResolvedValue({}),
+      assertCompleta: vi.fn().mockResolvedValue(undefined),
+    };
+    service = new DespachosService(prisma, movimientosMock, pickingMock);
   });
 
   // ── findAll ────────────────────────────────────────────────────────────────
@@ -188,21 +193,49 @@ describe('DespachosService', () => {
     it('iniciarPicking() rechaza si el estado no es APROBADO', async () => {
       vi.spyOn(service as any, 'findOne').mockResolvedValue({ ...DESPACHO_BASE, estado: 'PEDIDO' });
       await expect(service.iniciarPicking('e1', 'd1')).rejects.toThrow(ForbiddenException);
+      expect(pickingMock.generarListaEnTransaccion).not.toHaveBeenCalled();
     });
 
-    it('iniciarPicking() avanza a PICKING desde APROBADO', async () => {
-      vi.spyOn(service as any, 'findOne').mockResolvedValue({ ...DESPACHO_BASE, estado: 'APROBADO' });
+    it('iniciarPicking() genera la ListaPicking y avanza a PICKING desde APROBADO', async () => {
+      const despachoAprobado = { ...DESPACHO_BASE, estado: 'APROBADO' };
+      vi.spyOn(service as any, 'findOne').mockResolvedValue(despachoAprobado);
       const txUpdate = { despacho: { update: vi.fn().mockResolvedValue({ ...DESPACHO_BASE, estado: 'PICKING' }) } };
       prisma.withTenant.mockImplementationOnce((_e: string, fn: any) => fn(txUpdate));
+
       const r = await service.iniciarPicking('e1', 'd1');
+
+      expect(pickingMock.generarListaEnTransaccion).toHaveBeenCalledWith(txUpdate, 'e1', despachoAprobado);
       expect(r.estado).toBe('PICKING');
     });
 
-    it('marcarListo() avanza a LISTO desde PICKING', async () => {
+    it('marcarListo() rechaza si el estado no es PICKING', async () => {
+      vi.spyOn(service as any, 'findOne').mockResolvedValue({ ...DESPACHO_BASE, estado: 'APROBADO' });
+      await expect(service.marcarListo('e1', 'd1')).rejects.toThrow(ForbiddenException);
+      expect(pickingMock.assertCompleta).not.toHaveBeenCalled();
+    });
+
+    it('marcarListo() es idempotente si ya está en LISTO (auto-avance previo por picking+empaque)', async () => {
+      vi.spyOn(service as any, 'findOne').mockResolvedValue({ ...DESPACHO_BASE, estado: 'LISTO' });
+      const r = await service.marcarListo('e1', 'd1');
+      expect(r.estado).toBe('LISTO');
+      expect(pickingMock.assertCompleta).not.toHaveBeenCalled();
+      expect(prisma.withTenant).not.toHaveBeenCalled();
+    });
+
+    it('marcarListo() rechaza si la ListaPicking tiene líneas sin completar', async () => {
+      vi.spyOn(service as any, 'findOne').mockResolvedValue({ ...DESPACHO_BASE, estado: 'PICKING' });
+      pickingMock.assertCompleta.mockRejectedValue(new ForbiddenException('incompleta'));
+      await expect(service.marcarListo('e1', 'd1')).rejects.toThrow(ForbiddenException);
+    });
+
+    it('marcarListo() avanza a LISTO desde PICKING cuando el picking está completo', async () => {
       vi.spyOn(service as any, 'findOne').mockResolvedValue({ ...DESPACHO_BASE, estado: 'PICKING' });
       const txUpdate = { despacho: { update: vi.fn().mockResolvedValue({ ...DESPACHO_BASE, estado: 'LISTO' }) } };
       prisma.withTenant.mockImplementationOnce((_e: string, fn: any) => fn(txUpdate));
+
       const r = await service.marcarListo('e1', 'd1');
+
+      expect(pickingMock.assertCompleta).toHaveBeenCalledWith('e1', 'd1');
       expect(r.estado).toBe('LISTO');
     });
   });

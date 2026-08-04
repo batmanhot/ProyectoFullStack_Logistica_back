@@ -74,6 +74,7 @@ model Empresa {
   facturasB2B               FacturaB2B[]
   guiasRemisionElectronicas GuiaRemisionElectronica[]
   listasPrecios             ListaPrecios[]
+  registrosIncidencia       RegistroIncidencia[]
 
   @@map("empresas")
 }
@@ -111,6 +112,7 @@ model Usuario {
   pedidosEntregados            PedidoInterno[]         @relation("PedidoEntregador")
   inventariosFisicosRealizados InventarioFisico[]
   mantenimientosRegistrados    MantenimientoVehiculo[]
+  listasPickingAsignadas       ListaPicking[]
 
   @@unique([empresaId, email]) // email único POR tenant, no global
   @@index([empresaId])
@@ -162,6 +164,41 @@ model Auditoria {
   @@index([empresaId, usuarioId])
   @@index([detalle(ops: raw("gin_trgm_ops"))], type: Gin) // reemplaza el filtro busqueda actual hecho en JS
   @@map("auditoria")
+}
+
+// Registro de Incidencias — a diferencia de Auditoria (acciones exitosas de
+// usuarios), esto registra FALLAS del sistema (excepciones no controladas,
+// errores de negocio graves), al estilo "Registro de eventos de Windows".
+// Alimentado desde HttpExceptionFilter, best-effort (nunca debe romper la
+// respuesta al cliente si falla el guardado).
+enum SeveridadIncidencia {
+  CRITICO
+  ALTO
+  MEDIO
+  BAJO
+}
+
+model RegistroIncidencia {
+  id             String              @id @default(cuid())
+  empresaId      String
+  empresa        Empresa             @relation(fields: [empresaId], references: [id])
+  usuarioId      String? // nullable: la excepción puede ocurrir sin sesión autenticada resuelta
+  usuarioNombre  String?
+  modulo         String // segmento de la ruta, igual criterio que AuditoriaInterceptor
+  opcion         String // "MÉTODO /ruta" — endpoint donde ocurrió
+  codigoError    Int // HTTP status code
+  mensaje        String
+  stackTrace     String?
+  severidad      SeveridadIncidencia
+  contexto       Json? // request saneado (nunca passwords/tokens) — solo diagnóstico
+  resuelto       Boolean             @default(false)
+  notaResolucion String?
+  timestamp      DateTime            @default(now())
+
+  @@index([empresaId, severidad])
+  @@index([empresaId, modulo])
+  @@index([empresaId, timestamp])
+  @@map("registro_incidencias")
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -219,7 +256,8 @@ model Ubicacion {
   estado          String  @default("Disponible")
   observaciones   String?
 
-  inventario Inventario[]
+  inventario   Inventario[]
+  lineasPicking LineaPicking[]
 
   @@unique([almacenId, codigo])
   @@map("ubicaciones")
@@ -289,6 +327,7 @@ model Producto {
   pedidoInternoItems     PedidoInternoItem[]
   inventarioFisicoLineas InventarioFisicoLinea[]
   pedidoPortalItems      PedidoPortalItem[]
+  lineasPicking          LineaPicking[]
 
   @@unique([empresaId, sku])
   @@index([empresaId])
@@ -709,6 +748,7 @@ model Despacho {
   empaque                 Empaque?
   pedidoPortal            PedidoPortal?
   guiaRemisionElectronica GuiaRemisionElectronica?
+  listaPicking            ListaPicking?
 
   @@unique([empresaId, numero])
   @@index([empresaId])
@@ -731,6 +771,63 @@ model DespachoItem {
   cantidadReservada Decimal  @default(0) @db.Decimal(12, 2)
 
   @@map("despacho_items")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// PICKING — Propuesta 2026-07-31 (docs/PROPUESTA-MODULO-PICKING.md).
+// Fase 1: solo Despachos (no Pedidos Internos). Se genera automáticamente
+// al entrar a PICKING (DespachosService.iniciarPicking) y NO descuenta
+// Inventario — es trazabilidad de trabajo; el único que toca `cantidad`
+// sigue siendo el motor de Movimientos al despachar(). Sin picking
+// parcial: marcarListo() exige que TODAS las líneas estén COMPLETA.
+// ─────────────────────────────────────────────────────────────────
+
+enum EstadoListaPicking {
+  PENDIENTE
+  EN_PROCESO
+  COMPLETADA
+}
+
+enum EstadoLineaPicking {
+  PENDIENTE
+  PARCIAL
+  COMPLETA
+}
+
+model ListaPicking {
+  id                String             @id @default(cuid())
+  empresaId         String
+  despachoId        String             @unique
+  despacho          Despacho           @relation(fields: [despachoId], references: [id], onDelete: Cascade)
+  estado            EstadoListaPicking @default(PENDIENTE)
+  usuarioAsignadoId String?
+  usuarioAsignado   Usuario?           @relation(fields: [usuarioAsignadoId], references: [id])
+  fechaInicio       DateTime?
+  fechaFin          DateTime?
+  createdAt         DateTime           @default(now())
+
+  lineas LineaPicking[]
+
+  @@index([empresaId])
+  @@map("listas_picking")
+}
+
+model LineaPicking {
+  id                String             @id @default(cuid())
+  listaId           String
+  lista             ListaPicking       @relation(fields: [listaId], references: [id], onDelete: Cascade)
+  productoId        String
+  producto          Producto           @relation(fields: [productoId], references: [id])
+  // Ubicación sugerida al generar la lista (prioriza zona "Picking" y mayor
+  // stock); el operario puede corregirla al confirmar si tomó de otra.
+  // null = bucket sin asignar del almacén (Inventario.ubicacionId: null).
+  ubicacionId       String?
+  ubicacion         Ubicacion?         @relation(fields: [ubicacionId], references: [id])
+  cantidadRequerida Decimal            @db.Decimal(12, 2)
+  cantidadPickeada  Decimal            @default(0) @db.Decimal(12, 2)
+  estado            EstadoLineaPicking @default(PENDIENTE)
+
+  @@map("lineas_picking")
 }
 
 enum EstadoRuta {
@@ -858,11 +955,16 @@ model PedidoInterno {
   notasSolicitud        String?
   usuarioSolicitaId     String
   usuarioSolicita       Usuario             @relation("PedidoSolicitante", fields: [usuarioSolicitaId], references: [id])
+  // Trazabilidad — timestamp de cada transición de estado, para el timeline
+  // de "¿en qué estado está mi pedido?" que ve el solicitante.
+  fechaEnvio            DateTime?
   fechaAprobacion       DateTime?
   usuarioApruebaId      String?
   usuarioAprueba        Usuario?            @relation("PedidoAprobador", fields: [usuarioApruebaId], references: [id])
   notasAprobacion       String?
+  fechaRechazo          DateTime?
   motivoRechazo         String?
+  fechaPicking          DateTime?
   fechaEntrega          DateTime?
   usuarioEntregaId      String?
   usuarioEntrega        Usuario?            @relation("PedidoEntregador", fields: [usuarioEntregaId], references: [id])

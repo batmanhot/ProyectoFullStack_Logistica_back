@@ -28,9 +28,29 @@ export class PedidosInternosService {
           ...(filtros.areaId && { areaId: filtros.areaId }),
           ...(filtros.estado && { estado: validarEnum(filtros.estado, Object.values(EstadoPedidoInterno)) }),
         },
-        include: { items: true, area: { select: { nombre: true, codigo: true } } },
+        include: {
+          items: true,
+          area: { select: { nombre: true, codigo: true } },
+          // Nombres para el timeline de trazabilidad — el detalle en el frontend
+          // reutiliza estos mismos objetos ya cargados en la lista, sin una
+          // llamada aparte a /usuarios (el rol 'solicitante' no tiene ese permiso).
+          usuarioSolicita: { select: { nombre: true } },
+          usuarioAprueba: { select: { nombre: true } },
+          usuarioEntrega: { select: { nombre: true } },
+        },
         orderBy: { fecha: 'desc' },
         take: 500,
+      }),
+    );
+  }
+
+  /** Ver nota en el controller — catálogo mínimo, sin costos ni stock. */
+  productosDisponibles(empresaId: string) {
+    return this.prisma.withTenant(empresaId, (tx) =>
+      tx.producto.findMany({
+        where: { empresaId, estado: 'Activo' },
+        select: { id: true, sku: true, nombre: true, unidadMedida: true },
+        orderBy: { nombre: 'asc' },
       }),
     );
   }
@@ -106,7 +126,7 @@ export class PedidosInternosService {
 
   /** BORRADOR -> ENVIADO. */
   async enviar(empresaId: string, id: string) {
-    return this.transicionSimple(empresaId, id, ['BORRADOR'], 'ENVIADO');
+    return this.transicionSimple(empresaId, id, ['BORRADOR'], 'ENVIADO', { fechaEnvio: new Date() });
   }
 
   /** ENVIADO -> APROBADO. */
@@ -140,6 +160,7 @@ export class PedidosInternosService {
         where: { id },
         data: {
           estado: 'RECHAZADO',
+          fechaRechazo: new Date(),
           usuarioApruebaId,
           motivoRechazo: dto.motivo,
         },
@@ -150,7 +171,7 @@ export class PedidosInternosService {
 
   /** APROBADO -> PICKING. */
   async marcarPicking(empresaId: string, id: string) {
-    return this.transicionSimple(empresaId, id, ['APROBADO'], 'PICKING');
+    return this.transicionSimple(empresaId, id, ['APROBADO'], 'PICKING', { fechaPicking: new Date() });
   }
 
   /**
@@ -201,7 +222,13 @@ export class PedidosInternosService {
     );
   }
 
-  private async transicionSimple(empresaId: string, id: string, desde: string[], hacia: string) {
+  private async transicionSimple(
+    empresaId: string,
+    id: string,
+    desde: string[],
+    hacia: string,
+    extraData: Record<string, unknown> = {},
+  ) {
     const pedido = await this.findOne(empresaId, id);
     if (!desde.includes(pedido.estado)) {
       throw new ForbiddenException(`No se puede pasar de ${pedido.estado} a ${hacia}`);
@@ -209,7 +236,7 @@ export class PedidosInternosService {
     return this.prisma.withTenant(empresaId, (tx) =>
       tx.pedidoInterno.update({
         where: { id },
-        data: { estado: hacia as any },
+        data: { estado: hacia as any, ...extraData },
         include: { items: true },
       }),
     );

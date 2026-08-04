@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ScheduleModule } from '@nestjs/schedule';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UsuariosModule } from './usuarios/usuarios.module';
@@ -28,6 +29,7 @@ import { InventarioFisicoModule } from './inventario-fisico/inventario-fisico.mo
 import { FlotaModule } from './flota/flota.module';
 import { ReportesModule } from './reportes/reportes.module';
 import { EmpaquesModule } from './empaques/empaques.module';
+import { PickingModule } from './picking/picking.module';
 import { AdminAuthModule } from './admin/auth/admin-auth.module';
 import { NegociosModule } from './admin/negocios/negocios.module';
 import { PlanesModule } from './admin/planes/planes.module';
@@ -44,6 +46,7 @@ import { PublicModule } from './public/public.module';
 import { ListasPreciosModule } from './listas-precios/listas-precios.module';
 import { DatosModule } from './datos/datos.module';
 import { PanelAuditoriaModule } from './panel-auditoria/panel-auditoria.module';
+import { IncidenciasModule } from './incidencias/incidencias.module';
 
 @Module({
   imports: [
@@ -53,6 +56,8 @@ import { PanelAuditoriaModule } from './panel-auditoria/panel-auditoria.module';
     // razonable acá; los 3 endpoints de login usan @Throttle con un límite
     // más estricto (ver auth.controller.ts / admin-auth.controller.ts).
     ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 120 }]),
+    // Habilita @Cron en IncidenciasService — purga diaria de incidencias resueltas.
+    ScheduleModule.forRoot(),
     PrismaModule,
     // Fase 1
     AuthModule,
@@ -88,6 +93,8 @@ import { PanelAuditoriaModule } from './panel-auditoria/panel-auditoria.module';
     ReportesModule,
     // Fase 7c — Empaque
     EmpaquesModule,
+    // Módulo de Picking — 2026-07-31 (docs/PROPUESTA-MODULO-PICKING.md)
+    PickingModule,
     // Fase 7d — AdminSaaS (auth cross-tenant separada — ver PlatformAdminGuard)
     AdminAuthModule,
     NegociosModule,
@@ -104,6 +111,8 @@ import { PanelAuditoriaModule } from './panel-auditoria/panel-auditoria.module';
     // Fase 8 — Auditoría y Configuración de empresa
     AuditoriaModule,
     PanelAuditoriaModule,
+    // Registro de Incidencias — propuesta aprobada 2026-07-31 (ver informe en conversación)
+    IncidenciasModule,
     ConfiguracionModule,
     // Fase 9 — Endpoints públicos (landing + planes sin auth) para la landing page pública
     PublicModule,

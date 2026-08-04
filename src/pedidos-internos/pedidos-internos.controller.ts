@@ -20,6 +20,19 @@ export class PedidosInternosController {
     return this.pedidosInternosService.findAll(empresaId, { areaId, estado });
   }
 
+  /**
+   * Catálogo mínimo (id/sku/nombre/unidad — sin costos ni stock) de productos
+   * activos para armar la solicitud. El rol 'solicitante' no tiene el permiso
+   * 'inventario' que exige GET /productos, pero sí necesita elegir qué pedir;
+   * esta ruta vive gateada por el mismo @Permiso('pedidos-internos') del
+   * controller, así que no amplía lo que ese rol puede ver. Debe declararse
+   * antes de ':id' para que Nest no la confunda con un id de pedido.
+   */
+  @Get('productos-disponibles')
+  productosDisponibles(@TenantId() empresaId: string) {
+    return this.pedidosInternosService.productosDisponibles(empresaId);
+  }
+
   @Get(':id')
   findOne(@TenantId() empresaId: string, @Param('id') id: string) {
     return this.pedidosInternosService.findOne(empresaId, id);

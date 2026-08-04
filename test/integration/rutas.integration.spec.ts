@@ -1,12 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DespachosService } from '../../src/despachos/despachos.service';
 import { MovimientosService } from '../../src/movimientos/movimientos.service';
+import { PickingService } from '../../src/picking/picking.service';
 import { RutasService } from '../../src/rutas/rutas.service';
 import { dbOwner, nuevoPrismaService, crearFixtureEmpresa, crearTransportista, limpiarFixtureEmpresa } from './setup';
 
 describe('RutasService (integración, Postgres real)', () => {
   let prisma: ReturnType<typeof nuevoPrismaService>;
   let despachosService: DespachosService;
+  let picking: PickingService;
   let rutasService: RutasService;
   let fx: Awaited<ReturnType<typeof crearFixtureEmpresa>>;
   let transportistaId: string;
@@ -19,6 +21,13 @@ describe('RutasService (integración, Postgres real)', () => {
     } as any);
     await despachosService.aprobar(fx.empresaId, d.id);
     await despachosService.iniciarPicking(fx.empresaId, d.id);
+
+    // Confirma el picking del 100% de las líneas — requisito de marcarListo().
+    const lista = await picking.findByDespacho(fx.empresaId, d.id);
+    for (const linea of lista!.lineas) {
+      await picking.confirmarLinea(fx.empresaId, d.id, linea.id, { cantidad: Number(linea.cantidadRequerida) });
+    }
+
     await despachosService.marcarListo(fx.empresaId, d.id);
     return d;
   }
@@ -26,7 +35,8 @@ describe('RutasService (integración, Postgres real)', () => {
   beforeAll(async () => {
     prisma = nuevoPrismaService();
     await prisma.$connect();
-    despachosService = new DespachosService(prisma, new MovimientosService(prisma));
+    picking = new PickingService(prisma);
+    despachosService = new DespachosService(prisma, new MovimientosService(prisma), picking);
     rutasService = new RutasService(prisma, despachosService);
     fx = await crearFixtureEmpresa('ruta');
     transportistaId = (await crearTransportista(fx.empresaId)).id;

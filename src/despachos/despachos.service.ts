@@ -7,6 +7,7 @@ import {
 import { EstadoDespacho, PrismaClient, TipoMovimiento } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MovimientosService } from '../movimientos/movimientos.service';
+import { PickingService } from '../picking/picking.service';
 import { CreateDespachoDto } from './dto/create-despacho.dto';
 import { UpdateDespachoDto } from './dto/update-despacho.dto';
 import { DespacharDto } from './dto/despachar.dto';
@@ -22,6 +23,7 @@ export class DespachosService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly movimientosService: MovimientosService,
+    private readonly pickingService: PickingService,
   ) {}
 
   findAll(empresaId: string, filtros: { clienteId?: string; estado?: string } = {}) {
@@ -36,6 +38,7 @@ export class DespachosService {
           items: true,
           cliente: { select: { razonSocial: true } },
           transportista: { select: { nombre: true } },
+          empaque: { select: { estado: true } },
         },
         orderBy: { fecha: 'desc' },
         take: 500,
@@ -184,12 +187,45 @@ export class DespachosService {
     return this.transicionSimple(empresaId, id, ['PEDIDO'], 'APROBADO');
   }
 
-  iniciarPicking(empresaId: string, id: string) {
-    return this.transicionSimple(empresaId, id, ['APROBADO'], 'PICKING');
+  /**
+   * APROBADO -> PICKING. Además del cambio de estado, genera la ListaPicking
+   * (una línea por item) en la MISMA transacción — ver PickingService y
+   * docs/PROPUESTA-MODULO-PICKING.md. Si la generación falla, el estado
+   * tampoco cambia.
+   */
+  async iniciarPicking(empresaId: string, id: string) {
+    const despacho = await this.findOne(empresaId, id);
+    if (despacho.estado !== 'APROBADO') {
+      throw new ForbiddenException(`No se puede pasar de ${despacho.estado} a PICKING`);
+    }
+    return this.prisma.withTenant(empresaId, async (tx) => {
+      await this.pickingService.generarListaEnTransaccion(tx, empresaId, despacho);
+      return tx.despacho.update({ where: { id }, data: { estado: 'PICKING' }, include: { items: true } });
+    });
   }
 
-  marcarListo(empresaId: string, id: string) {
-    return this.transicionSimple(empresaId, id, ['PICKING'], 'LISTO');
+  /**
+   * PICKING -> LISTO. Sin picking parcial (decisión confirmada 2026-07-31):
+   * exige que TODAS las líneas de la ListaPicking estén COMPLETA antes de
+   * permitir el avance.
+   *
+   * Idempotente si ya está en LISTO: desde que PickingService/EmpaquesService
+   * avanzan el despacho automáticamente en cuanto coinciden picking completo
+   * + empaque confirmado (en cualquier orden), el botón "Marcar Listo" del
+   * modal de Picking puede seguir habilitado cuando esa auto-transición ya
+   * ocurrió — tratarlo como error confundiría al usuario con un pedido que
+   * en realidad ya está listo.
+   */
+  async marcarListo(empresaId: string, id: string) {
+    const despacho = await this.findOne(empresaId, id);
+    if (despacho.estado === 'LISTO') return despacho;
+    if (despacho.estado !== 'PICKING') {
+      throw new ForbiddenException(`No se puede pasar de ${despacho.estado} a LISTO`);
+    }
+    await this.pickingService.assertCompleta(empresaId, id);
+    return this.prisma.withTenant(empresaId, (tx) =>
+      tx.despacho.update({ where: { id }, data: { estado: 'LISTO' }, include: { items: true } }),
+    );
   }
 
   /** LISTO -> DESPACHADO. Genera Movimientos SALIDA reales y libera la reserva. */
