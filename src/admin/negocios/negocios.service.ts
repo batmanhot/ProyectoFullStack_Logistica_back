@@ -58,6 +58,7 @@ export class NegociosService {
           data: {
             codigo: dto.codigo.toLowerCase(),
             nombre: dto.nombre,
+            nombreCorto: dto.nombreCorto,
             ruc: dto.ruc,
             contacto: dto.contacto,
             email: dto.email,
@@ -99,6 +100,7 @@ export class NegociosService {
         where: { id },
         data: {
           ...(dto.nombre !== undefined && { nombre: dto.nombre }),
+          ...(dto.nombreCorto !== undefined && { nombreCorto: dto.nombreCorto }),
           ...(dto.ruc !== undefined && { ruc: dto.ruc }),
           ...(dto.contacto !== undefined && { contacto: dto.contacto }),
           ...(dto.email !== undefined && { email: dto.email }),

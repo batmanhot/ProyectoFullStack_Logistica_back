@@ -6,6 +6,10 @@ export class UpdateNegocioDto {
   nombre?: string;
 
   @IsOptional()
+  @IsString()
+  nombreCorto?: string;
+
+  @IsOptional()
   @Matches(/^\d{8,11}$/, { message: 'El RUC debe tener entre 8 y 11 dígitos numéricos' })
   ruc?: string;
 

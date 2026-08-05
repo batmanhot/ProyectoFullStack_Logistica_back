@@ -11,6 +11,11 @@ export class CreateNegocioDto {
   @IsNotEmpty()
   nombre: string;
 
+  /** Nombre corto para mostrar en el sidebar cuando el nombre completo es muy largo. */
+  @IsOptional()
+  @IsString()
+  nombreCorto?: string;
+
   @Matches(/^\d{8,11}$/, { message: 'El RUC debe tener entre 8 y 11 dígitos numéricos' })
   ruc: string;
 

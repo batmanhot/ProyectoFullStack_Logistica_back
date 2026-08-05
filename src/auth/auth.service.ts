@@ -37,6 +37,7 @@ export class AuthService {
         id: true,
         codigo: true,
         nombre: true,
+        nombreCorto: true,
         plan: true,
         estado: true,
         activo: true,

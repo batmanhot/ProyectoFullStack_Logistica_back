@@ -34,6 +34,7 @@ model Empresa {
   id               String    @id @default(cuid())
   codigo           String    @unique // slug usado en login: 'dlnorte', 'acme', etc. Siempre lowercase.
   nombre           String
+  nombreCorto      String? // nombre corto para mostrar en el sidebar cuando el nombre completo es muy largo; editable solo desde AdminSaaS
   ruc              String    @unique
   contacto         String?
   email            String?
