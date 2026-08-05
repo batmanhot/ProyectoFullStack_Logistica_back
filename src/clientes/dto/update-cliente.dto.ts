@@ -43,4 +43,9 @@ export class UpdateClienteDto {
   @IsOptional()
   @IsBoolean()
   activo?: boolean;
+
+  /** `null` desasigna la lista de precios del cliente. */
+  @IsOptional()
+  @IsString()
+  listaPrecioId?: string | null;
 }

@@ -40,4 +40,8 @@ export class CreateClienteDto {
   @IsOptional()
   @IsString()
   notas?: string;
+
+  @IsOptional()
+  @IsString()
+  listaPrecioId?: string;
 }

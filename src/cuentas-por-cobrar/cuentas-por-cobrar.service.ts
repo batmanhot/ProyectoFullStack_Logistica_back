@@ -44,6 +44,7 @@ export class CuentasPorCobrarService {
     await this.validarCliente(empresaId, dto.clienteId);
     if (dto.despachoId) {
       await this.validarDespacho(empresaId, dto.despachoId);
+      await this.validarSinCxCPrevia(empresaId, dto.despachoId);
     }
 
     const diasCredito = dto.diasCredito ?? DIAS_CREDITO_DEFAULT;
@@ -165,5 +166,21 @@ export class CuentasPorCobrarService {
       () => this.prisma.withTenant(empresaId, (tx) => tx.despacho.findFirst({ where: { id: despachoId, empresaId } })),
       'El despacho indicado no existe o no pertenece a esta empresa',
     );
+  }
+
+  /**
+   * Antes, `despachoId` era solo un prefill de UI sin ninguna integridad de
+   * negocio detrás — el mismo despacho podía terminar con varias CxC por
+   * doble click o reintento. No hay estado "anulada" en EstadoCxC: cualquier
+   * CxC existente para este despacho (sea cual sea su estado) ya cuenta como
+   * la cuenta de esa venta.
+   */
+  private async validarSinCxCPrevia(empresaId: string, despachoId: string) {
+    const existente = await this.prisma.withTenant(empresaId, (tx) =>
+      tx.cuentaPorCobrar.findFirst({ where: { empresaId, despachoId }, select: { numero: true } }),
+    );
+    if (existente) {
+      throw new BadRequestException(`Este despacho ya tiene una cuenta por cobrar asociada (${existente.numero})`);
+    }
   }
 }

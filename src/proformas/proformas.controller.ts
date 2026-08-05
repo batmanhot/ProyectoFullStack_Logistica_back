@@ -4,6 +4,7 @@ import { Permiso } from '../common/decorators/permiso.decorator';
 import { ProformasService } from './proformas.service';
 import { CreateProformaDto } from './dto/create-proforma.dto';
 import { UpdateProformaDto } from './dto/update-proforma.dto';
+import { ConvertirDespachoDto } from './dto/convertir-despacho.dto';
 
 @Permiso('proformas')
 @Controller('proformas')
@@ -37,5 +38,15 @@ export class ProformasController {
   @Delete(':id')
   remove(@TenantId() empresaId: string, @Param('id') id: string) {
     return this.proformasService.remove(empresaId, id);
+  }
+
+  /** Convierte una Proforma ACEPTADA en un Despacho real (con reserva de stock) vía DespachosService. */
+  @Post(':id/convertir-despacho')
+  convertirADespacho(
+    @TenantId() empresaId: string,
+    @Param('id') id: string,
+    @Body() dto: ConvertirDespachoDto,
+  ) {
+    return this.proformasService.convertirADespacho(empresaId, id, dto);
   }
 }

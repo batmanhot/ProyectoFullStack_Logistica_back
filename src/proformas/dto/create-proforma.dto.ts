@@ -3,6 +3,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsDateString,
+  IsEnum,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -10,6 +11,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { FormaPago } from '@prisma/client';
 
 export class CreateProformaItemDto {
   @IsString()
@@ -42,6 +44,15 @@ export class CreateProformaDto {
   @IsOptional()
   @IsString()
   notas?: string;
+
+  @IsOptional()
+  @IsEnum(FormaPago)
+  formaPago?: FormaPago;
+
+  /** Lista de precios usada para sugerir los precios de los ítems — solo trazabilidad, no afecta el cálculo. */
+  @IsOptional()
+  @IsString()
+  listaPrecioId?: string;
 
   @IsArray()
   @ArrayMinSize(1, { message: 'La proforma debe tener al menos un ítem' })

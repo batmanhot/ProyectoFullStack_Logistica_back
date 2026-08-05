@@ -76,6 +76,15 @@ describe('CuentasPorCobrarService', () => {
       await expect(service.create('e1', { ...dto, despachoId: 'd-404' } as any))
         .rejects.toThrow(BadRequestException);
     });
+
+    it('rechaza si el despacho indicado ya tiene una CxC asociada', async () => {
+      prisma.withTenant
+        .mockResolvedValueOnce({ id: 'cli1' })                    // validarCliente
+        .mockResolvedValueOnce({ id: 'desp-1' })                  // validarDespacho
+        .mockResolvedValueOnce({ numero: 'CXC-00003' });          // validarSinCxCPrevia → ya existe
+      await expect(service.create('e1', { ...dto, despachoId: 'desp-1' } as any))
+        .rejects.toThrow('Este despacho ya tiene una cuenta por cobrar asociada (CXC-00003)');
+    });
   });
 
   describe('update', () => {

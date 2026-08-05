@@ -224,12 +224,30 @@ describe('PedidosInternosService', () => {
         items: [{ productoId: 'prod-1', cantidad: 5 }, { productoId: 'prod-2', cantidad: 3 }],
       } as any);
       const txMock = {
+        producto: { findMany: vi.fn().mockResolvedValue([{ id: 'prod-1', nombre: 'Producto 1' }, { id: 'prod-2', nombre: 'Producto 2' }]) },
+        inventario: { findMany: vi.fn().mockResolvedValue([{ ubicacionId: null, cantidad: 100, cantidadReservada: 0 }]) },
         pedidoInterno: { update: vi.fn().mockImplementation(({ data }: any) => Promise.resolve({ ...PEDIDO_BASE, ...data })) },
       };
       prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(txMock));
       const r = await service.entregar('e1', 'p1', 'usr-almacenero');
       expect(movimientosMock.crearEnTransaccion).toHaveBeenCalledTimes(2);
       expect(r.estado).toBe('ENTREGADO');
+    });
+
+    it('rechaza y lista TODOS los productos con stock insuficiente, sin generar ningún movimiento', async () => {
+      vi.spyOn(service, 'findOne').mockResolvedValue({
+        ...PEDIDO_BASE, estado: 'PICKING',
+        items: [{ productoId: 'prod-1', cantidad: 5 }, { productoId: 'prod-2', cantidad: 3 }],
+      } as any);
+      const txMock = {
+        producto: { findMany: vi.fn().mockResolvedValue([{ id: 'prod-1', nombre: 'Producto 1' }, { id: 'prod-2', nombre: 'Producto 2' }]) },
+        inventario: { findMany: vi.fn().mockResolvedValue([{ ubicacionId: null, cantidad: 0, cantidadReservada: 0 }]) },
+      };
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(txMock));
+      await expect(service.entregar('e1', 'p1', 'usr-almacenero')).rejects.toThrow(
+        'Stock insuficiente en el almacén para:\n- Producto 1: disponible 0, se requieren 5\n- Producto 2: disponible 0, se requieren 3',
+      );
+      expect(movimientosMock.crearEnTransaccion).not.toHaveBeenCalled();
     });
   });
 

@@ -3,6 +3,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsDateString,
+  IsEnum,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -10,6 +11,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { FormaPago } from '@prisma/client';
 
 export class CreateDespachoItemDto {
   @IsString()
@@ -54,6 +56,10 @@ export class CreateDespachoDto {
   @IsOptional()
   @IsString()
   observaciones?: string;
+
+  @IsOptional()
+  @IsEnum(FormaPago)
+  formaPago?: FormaPago;
 
   // Por analogía con la regla "al menos un ítem" de Orden de Compra/Cotizacion.
   @IsArray()

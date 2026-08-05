@@ -24,4 +24,12 @@ export class UpdateProveedorDto {
   @IsOptional()
   @IsBoolean()
   activo?: boolean;
+
+  @IsOptional()
+  @IsString()
+  paisOrigen?: string;
+
+  @IsOptional()
+  @IsString()
+  monedaNegociacion?: string;
 }

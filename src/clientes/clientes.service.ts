@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateClienteDto } from './dto/create-cliente.dto';
 import { UpdateClienteDto } from './dto/update-cliente.dto';
+import { assertExists } from '../common/utils/assert-exists.util';
 
 @Injectable()
 export class ClientesService {
@@ -28,7 +29,8 @@ export class ClientesService {
     return cliente;
   }
 
-  create(empresaId: string, dto: CreateClienteDto) {
+  async create(empresaId: string, dto: CreateClienteDto) {
+    if (dto.listaPrecioId) await this.validarListaPrecio(empresaId, dto.listaPrecioId);
     return this.prisma.withTenant(empresaId, (tx) =>
       tx.cliente.create({
         data: {
@@ -42,6 +44,7 @@ export class ClientesService {
           condicionPago: dto.condicionPago,
           limiteCredito: dto.limiteCredito,
           notas: dto.notas,
+          listaPrecioId: dto.listaPrecioId,
         },
       }),
     );
@@ -49,6 +52,7 @@ export class ClientesService {
 
   async update(empresaId: string, id: string, dto: UpdateClienteDto) {
     await this.findOne(empresaId, id);
+    if (dto.listaPrecioId) await this.validarListaPrecio(empresaId, dto.listaPrecioId);
     return this.prisma.withTenant(empresaId, (tx) =>
       tx.cliente.update({
         where: { id },
@@ -63,6 +67,7 @@ export class ClientesService {
           ...(dto.limiteCredito !== undefined && { limiteCredito: dto.limiteCredito }),
           ...(dto.notas !== undefined && { notas: dto.notas }),
           ...(dto.activo !== undefined && { activo: dto.activo }),
+          ...(dto.listaPrecioId !== undefined && { listaPrecioId: dto.listaPrecioId }),
         },
       }),
     );
@@ -73,6 +78,13 @@ export class ClientesService {
     await this.findOne(empresaId, id);
     return this.prisma.withTenant(empresaId, (tx) =>
       tx.cliente.update({ where: { id }, data: { activo: false } }),
+    );
+  }
+
+  private validarListaPrecio(empresaId: string, listaPrecioId: string) {
+    return assertExists(
+      () => this.prisma.withTenant(empresaId, (tx) => tx.listaPrecios.findFirst({ where: { id: listaPrecioId, empresaId } })),
+      'La lista de precios indicada no existe o no pertenece a esta empresa',
     );
   }
 }

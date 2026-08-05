@@ -1,10 +1,12 @@
-import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { TenantId } from '../common/decorators/tenant.decorator';
 import { Permiso } from '../common/decorators/permiso.decorator';
 import { OrdenesCompraService } from './ordenes-compra.service';
 import { CreateOrdenCompraDto } from './dto/create-orden-compra.dto';
 import { UpdateOrdenCompraDto } from './dto/update-orden-compra.dto';
 import { RecibirOrdenCompraDto } from './dto/recibir-orden-compra.dto';
+import { CreateGastoImportacionDto } from './dto/create-gasto-importacion.dto';
+import { ActualizarEstadoLogisticoDto } from './dto/actualizar-estado-logistico.dto';
 
 @Permiso('ordenes')
 @Controller('ordenes-compra')
@@ -47,5 +49,34 @@ export class OrdenesCompraController {
     @Body() dto: RecibirOrdenCompraDto,
   ) {
     return this.ordenesCompraService.recibir(empresaId, id, dto);
+  }
+
+  /** Módulo de Importación — agrega un gasto (flete, seguro, aduana...) a la OC. */
+  @Post(':id/gastos-importacion')
+  agregarGasto(
+    @TenantId() empresaId: string,
+    @Param('id') id: string,
+    @Body() dto: CreateGastoImportacionDto,
+  ) {
+    return this.ordenesCompraService.agregarGastoImportacion(empresaId, id, dto);
+  }
+
+  @Delete(':id/gastos-importacion/:gastoId')
+  eliminarGasto(
+    @TenantId() empresaId: string,
+    @Param('id') id: string,
+    @Param('gastoId') gastoId: string,
+  ) {
+    return this.ordenesCompraService.eliminarGastoImportacion(empresaId, id, gastoId);
+  }
+
+  /** Avanza el estado logístico (EN_ORIGEN → ... → NACIONALIZADA); nacionalizar calcula el landed cost. */
+  @Patch(':id/estado-logistico')
+  actualizarEstadoLogistico(
+    @TenantId() empresaId: string,
+    @Param('id') id: string,
+    @Body() dto: ActualizarEstadoLogisticoDto,
+  ) {
+    return this.ordenesCompraService.actualizarEstadoLogistico(empresaId, id, dto);
   }
 }

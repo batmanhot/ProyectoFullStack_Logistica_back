@@ -4,11 +4,13 @@ import { ProformasService } from './proformas.service';
 
 describe('ProformasService', () => {
   let prisma: any;
+  let despachosMock: any;
   let service: ProformasService;
 
   beforeEach(() => {
     prisma = { withTenant: vi.fn() };
-    service = new ProformasService(prisma);
+    despachosMock = { validarParaCrear: vi.fn(), crearEnTransaccion: vi.fn() };
+    service = new ProformasService(prisma, despachosMock);
   });
 
   describe('findOne', () => {
@@ -39,7 +41,7 @@ describe('ProformasService', () => {
     it('rechaza si algún producto no existe', async () => {
       prisma.withTenant
         .mockResolvedValueOnce({ id: 'cli1' })  // validarCliente
-        .mockResolvedValueOnce(null);             // validarProducto → null
+        .mockResolvedValueOnce([]);               // validarProductos → findMany sin resultados
       await expect(service.create('e1', dto as any)).rejects.toThrow(BadRequestException);
     });
 
@@ -51,8 +53,8 @@ describe('ProformasService', () => {
         },
       };
       prisma.withTenant
-        .mockResolvedValueOnce({ id: 'cli1' })   // validarCliente
-        .mockResolvedValueOnce({ id: 'prod1' })  // validarProducto
+        .mockResolvedValueOnce({ id: 'cli1' })       // validarCliente
+        .mockResolvedValueOnce([{ id: 'prod1' }])    // validarProductos
         .mockImplementationOnce((_e: string, fn: any) => fn(txMock));
 
       const r = await service.create('e1', dto as any);
@@ -67,7 +69,7 @@ describe('ProformasService', () => {
       };
       prisma.withTenant
         .mockResolvedValueOnce({ id: 'cli1' })
-        .mockResolvedValueOnce({ id: 'prod1' })
+        .mockResolvedValueOnce([{ id: 'prod1' }])
         .mockImplementationOnce((_e: string, fn: any) => fn(txMock));
 
       await service.create('e1', dto as any);
@@ -102,6 +104,48 @@ describe('ProformasService', () => {
         .mockImplementationOnce((_e: string, fn: any) => fn(txMock));
       const r = await service.update('e1', 'pf1', { notas: 'Urgente' });
       expect(r.notas).toBe('Urgente');
+    });
+  });
+
+  describe('convertirADespacho', () => {
+    it('rechaza si la proforma no está ACEPTADA', async () => {
+      vi.spyOn(service, 'findOne').mockResolvedValue({ estado: 'ENVIADA' } as any);
+      await expect(
+        service.convertirADespacho('e1', 'pf1', { almacenId: 'alm-1' } as any),
+      ).rejects.toThrow(ForbiddenException);
+      expect(despachosMock.validarParaCrear).not.toHaveBeenCalled();
+    });
+
+    it('crea un Despacho REAL vía DespachosService (en la misma transacción) y marca CONVERTIDA', async () => {
+      vi.spyOn(service, 'findOne').mockResolvedValue({
+        id: 'pf1',
+        estado: 'ACEPTADA',
+        clienteId: 'cli-1',
+        formaPago: 'CONTADO',
+        items: [{ productoId: 'p1', cantidad: 3, precioUnitario: 10 }],
+      } as any);
+      despachosMock.validarParaCrear.mockResolvedValue(undefined);
+      despachosMock.crearEnTransaccion.mockResolvedValue({ id: 'desp-1', numero: 'DESP-00001' });
+
+      const txMock = {
+        proforma: {
+          update: vi.fn().mockImplementation(({ data }) => Promise.resolve({ estado: data.estado, despachoId: data.despachoId })),
+        },
+      };
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(txMock));
+
+      const resultado = await service.convertirADespacho('e1', 'pf1', { almacenId: 'alm-1' } as any);
+
+      const dtoEsperado = expect.objectContaining({
+        clienteId: 'cli-1',
+        almacenId: 'alm-1',
+        formaPago: 'CONTADO',
+        items: [{ productoId: 'p1', cantidad: 3, precioVenta: 10 }],
+      });
+      expect(despachosMock.validarParaCrear).toHaveBeenCalledWith('e1', dtoEsperado);
+      expect(despachosMock.crearEnTransaccion).toHaveBeenCalledWith(txMock, 'e1', dtoEsperado);
+      expect(resultado.estado).toBe('CONVERTIDA');
+      expect(resultado.despachoId).toBe('desp-1');
     });
   });
 

@@ -23,4 +23,12 @@ export class CreateProveedorDto {
   @IsOptional()
   @IsString()
   direccion?: string;
+
+  @IsOptional()
+  @IsString()
+  paisOrigen?: string;
+
+  @IsOptional()
+  @IsString()
+  monedaNegociacion?: string;
 }

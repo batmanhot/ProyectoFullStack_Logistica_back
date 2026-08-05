@@ -44,6 +44,8 @@ export class ProveedoresService {
           telefono: dto.telefono,
           email: dto.email,
           direccion: dto.direccion,
+          paisOrigen: dto.paisOrigen,
+          ...(dto.monedaNegociacion !== undefined && { monedaNegociacion: dto.monedaNegociacion }),
         },
       }),
     );
@@ -61,6 +63,8 @@ export class ProveedoresService {
           ...(dto.email !== undefined && { email: dto.email }),
           ...(dto.direccion !== undefined && { direccion: dto.direccion }),
           ...(dto.activo !== undefined && { activo: dto.activo }),
+          ...(dto.paisOrigen !== undefined && { paisOrigen: dto.paisOrigen }),
+          ...(dto.monedaNegociacion !== undefined && { monedaNegociacion: dto.monedaNegociacion }),
         },
       }),
     );

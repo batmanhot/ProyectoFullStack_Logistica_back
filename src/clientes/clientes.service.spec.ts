@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ClientesService } from './clientes.service';
 
 describe('ClientesService', () => {
@@ -67,6 +67,25 @@ describe('ClientesService', () => {
       expect(r.razonSocial).toBe('Distribuciones SAC');
       expect(r.ruc).toBe('20123456789');
     });
+
+    it('rechaza si listaPrecioId no existe o no pertenece a la empresa', async () => {
+      prisma.withTenant.mockResolvedValueOnce(null); // validarListaPrecio → null
+      await expect(
+        service.create('e1', { razonSocial: 'X', listaPrecioId: 'lp-404' } as any),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('crea cliente con listaPrecioId válido', async () => {
+      const txMock = { cliente: { create: vi.fn().mockResolvedValue({ id: 'c2', listaPrecioId: 'lp-1' }) } };
+      prisma.withTenant
+        .mockResolvedValueOnce({ id: 'lp-1' }) // validarListaPrecio
+        .mockImplementationOnce((_e: string, fn: any) => fn(txMock));
+      const r = await service.create('e1', { razonSocial: 'X', listaPrecioId: 'lp-1' } as any);
+      expect(r.listaPrecioId).toBe('lp-1');
+      expect(txMock.cliente.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ listaPrecioId: 'lp-1' }) }),
+      );
+    });
   });
 
   describe('update', () => {
@@ -84,6 +103,27 @@ describe('ClientesService', () => {
       const r = await service.update('e1', 'c1', { email: 'nuevo@test.com' });
       expect(r.email).toBe('nuevo@test.com');
       expect(txMockUpdate.cliente.update).toHaveBeenCalled();
+    });
+
+    it('rechaza si listaPrecioId no existe o no pertenece a la empresa', async () => {
+      prisma.withTenant
+        .mockResolvedValueOnce({ id: 'c1' }) // findOne
+        .mockResolvedValueOnce(null);         // validarListaPrecio → null
+      await expect(
+        service.update('e1', 'c1', { listaPrecioId: 'lp-404' } as any),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('permite desasignar la lista de precios con listaPrecioId=null', async () => {
+      const txMockUpdate = { cliente: { update: vi.fn().mockResolvedValue({ id: 'c1', listaPrecioId: null }) } };
+      prisma.withTenant
+        .mockResolvedValueOnce({ id: 'c1' }) // findOne
+        .mockImplementationOnce((_e: string, fn: any) => fn(txMockUpdate)); // update — sin validarListaPrecio, dto.listaPrecioId es null (falsy)
+      const r = await service.update('e1', 'c1', { listaPrecioId: null } as any);
+      expect(r.listaPrecioId).toBeNull();
+      expect(txMockUpdate.cliente.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ listaPrecioId: null }) }),
+      );
     });
   });
 

@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsDateString,
   IsNotEmpty,
   IsNumber,
@@ -43,6 +44,36 @@ export class CreateOrdenCompraDto {
   @IsOptional()
   @IsString()
   notas?: string;
+
+  // ── Importación (todos opcionales — solo tienen efecto si esImportacion=true) ──
+  @IsOptional()
+  @IsBoolean()
+  esImportacion?: boolean;
+
+  @IsOptional()
+  @IsString()
+  moneda?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0.0001)
+  tipoCambio?: number;
+
+  @IsOptional()
+  @IsString()
+  incoterm?: string;
+
+  @IsOptional()
+  @IsString()
+  numeroFacturaComercial?: string;
+
+  @IsOptional()
+  @IsString()
+  numeroBL?: string;
+
+  @IsOptional()
+  @IsString()
+  numeroDUA?: string;
 
   @IsArray()
   @ArrayMinSize(1, { message: 'La orden debe tener al menos un ítem' })

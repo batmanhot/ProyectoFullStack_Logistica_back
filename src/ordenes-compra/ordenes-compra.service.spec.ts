@@ -198,5 +198,122 @@ describe('OrdenesCompraService', () => {
       } as any);
       expect(r.estado).toBe('RECIBIDA');
     });
+
+    it('rechaza recibir una OC de importación que aún no está Nacionalizada', async () => {
+      vi.spyOn(service, 'findOne').mockResolvedValue({
+        ...ORDEN_BASE, esImportacion: true, estadoLogistico: 'EN_TRANSITO',
+      } as any);
+      await expect(
+        service.recibir('e1', 'oc-1', { items: [{ ordenCompraItemId: 'item-1', cantidad: 10 }] } as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(movimientosMock.crearEnTransaccion).not.toHaveBeenCalled();
+    });
+
+    it('usa costoUnitarioReal (landed cost) en vez del FOB cuando la OC ya fue nacionalizada', async () => {
+      vi.spyOn(service, 'findOne').mockResolvedValue({
+        ...ORDEN_BASE,
+        esImportacion: true,
+        estadoLogistico: 'NACIONALIZADA',
+        items: [{ id: 'item-1', productoId: 'prod-1', cantidad: 100, costoUnitario: 10, costoUnitarioReal: 13.5, cantidadRecibida: 0 }],
+      } as any);
+      const txMock = {
+        ordenCompraItem: {
+          update:   vi.fn().mockResolvedValue({}),
+          findMany: vi.fn().mockResolvedValue([{ id: 'item-1', cantidad: 100, cantidadRecibida: 100 }]),
+        },
+        ordenCompra: { update: vi.fn().mockImplementation(({ data }: any) => Promise.resolve(data)) },
+      };
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(txMock));
+      await service.recibir('e1', 'oc-1', { items: [{ ordenCompraItemId: 'item-1', cantidad: 100 }] } as any);
+      expect(movimientosMock.crearEnTransaccion).toHaveBeenCalledWith(
+        txMock, 'e1',
+        expect.objectContaining({ costoUnitario: 13.5 }),
+      );
+    });
+  });
+
+  // ── gastos de importación ────────────────────────────────────────────────
+  describe('agregarGastoImportacion', () => {
+    it('rechaza si la orden no está marcada como importación', async () => {
+      vi.spyOn(service, 'findOne').mockResolvedValue({ ...ORDEN_BASE, esImportacion: false } as any);
+      await expect(
+        service.agregarGastoImportacion('e1', 'oc-1', { tipo: 'FLETE', monto: 100 } as any),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rechaza si la orden ya está Nacionalizada', async () => {
+      vi.spyOn(service, 'findOne').mockResolvedValue({
+        ...ORDEN_BASE, esImportacion: true, estadoLogistico: 'NACIONALIZADA',
+      } as any);
+      await expect(
+        service.agregarGastoImportacion('e1', 'oc-1', { tipo: 'FLETE', monto: 100 } as any),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('crea el gasto cuando la orden es de importación y no está nacionalizada', async () => {
+      vi.spyOn(service, 'findOne').mockResolvedValue({
+        ...ORDEN_BASE, esImportacion: true, estadoLogistico: 'EN_TRANSITO', gastosImportacion: [],
+      } as any);
+      const txMock = { gastoImportacion: { create: vi.fn().mockResolvedValue({ id: 'g1', tipo: 'FLETE', monto: 100 }) } };
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(txMock));
+      const r = await service.agregarGastoImportacion('e1', 'oc-1', { tipo: 'FLETE', monto: 100 } as any);
+      expect(r.id).toBe('g1');
+    });
+  });
+
+  // ── estado logístico / nacionalización ──────────────────────────────────
+  describe('actualizarEstadoLogistico', () => {
+    it('rechaza si la orden no es de importación', async () => {
+      vi.spyOn(service, 'findOne').mockResolvedValue({ ...ORDEN_BASE, esImportacion: false } as any);
+      await expect(
+        service.actualizarEstadoLogistico('e1', 'oc-1', { estadoLogistico: 'EN_TRANSITO' } as any),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rechaza retroceder o repetir el estado logístico', async () => {
+      vi.spyOn(service, 'findOne').mockResolvedValue({
+        ...ORDEN_BASE, esImportacion: true, estadoLogistico: 'EN_ADUANA',
+      } as any);
+      await expect(
+        service.actualizarEstadoLogistico('e1', 'oc-1', { estadoLogistico: 'EN_TRANSITO' } as any),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('exige tipoCambio para nacionalizar si la OC no lo trae', async () => {
+      vi.spyOn(service, 'findOne').mockResolvedValue({
+        ...ORDEN_BASE, esImportacion: true, estadoLogistico: 'EN_ADUANA', tipoCambio: null,
+      } as any);
+      await expect(
+        service.actualizarEstadoLogistico('e1', 'oc-1', { estadoLogistico: 'NACIONALIZADA' } as any),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('calcula el landed cost prorrateado por valor FOB al nacionalizar', async () => {
+      // 2 ítems: prod-1 (100 x $10 = $1000 FOB) y prod-2 (50 x $5 = $250 FOB) → total FOB $1250
+      // Gastos: $125 (25% del FOB total) en PEN, tipoCambio 3.8
+      // prod-1 absorbe 1000/1250 = 80% de los gastos; prod-2 el 20%.
+      vi.spyOn(service, 'findOne').mockResolvedValue({
+        ...ORDEN_BASE,
+        esImportacion: true,
+        estadoLogistico: 'EN_ADUANA',
+        tipoCambio: null,
+        gastosImportacion: [{ id: 'g1', monto: 125, moneda: 'PEN' }],
+      } as any);
+      const itemUpdates: any[] = [];
+      const txMock = {
+        ordenCompraItem: { update: vi.fn().mockImplementation((args: any) => { itemUpdates.push(args); return Promise.resolve({}); }) },
+        ordenCompra: { update: vi.fn().mockImplementation(({ data }: any) => Promise.resolve({ ...ORDEN_BASE, ...data })) },
+      };
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(txMock));
+
+      const r = await service.actualizarEstadoLogistico('e1', 'oc-1', { estadoLogistico: 'NACIONALIZADA', tipoCambio: 3.8 } as any);
+
+      expect(r.estadoLogistico).toBe('NACIONALIZADA');
+      expect(r.tipoCambio).toBe(3.8);
+      // item-1: (1000*3.8 + 125*0.8) / 100 = (3800 + 100) / 100 = 39
+      expect(itemUpdates[0]).toEqual({ where: { id: 'item-1' }, data: { costoUnitarioReal: 39 } });
+      // item-2: (250*3.8 + 125*0.2) / 50 = (950 + 25) / 50 = 19.5
+      expect(itemUpdates[1]).toEqual({ where: { id: 'item-2' }, data: { costoUnitarioReal: 19.5 } });
+    });
   });
 });

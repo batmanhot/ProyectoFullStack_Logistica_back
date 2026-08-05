@@ -119,6 +119,7 @@ export class DespachosService {
           direccionEntrega: dto.direccionEntrega,
           transportistaId: dto.transportistaId,
           observaciones: dto.observaciones,
+          formaPago: dto.formaPago,
           subtotal,
           igv,
           total,

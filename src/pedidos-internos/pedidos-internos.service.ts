@@ -12,6 +12,7 @@ import { UpdatePedidoInternoDto } from './dto/update-pedido-interno.dto';
 import { AprobarPedidoDto, RechazarPedidoDto } from './dto/aprobar-rechazar.dto';
 import { validarEnum } from '../common/utils/validar-enum.util';
 import { assertExists } from '../common/utils/assert-exists.util';
+import { calcularDisponibleTotal } from '../movimientos/stock-impacto.util';
 
 @Injectable()
 export class PedidosInternosService {
@@ -185,6 +186,32 @@ export class PedidosInternosService {
       throw new ForbiddenException(`No se puede entregar un pedido en estado ${pedido.estado}`);
     }
 
+    // Valida el stock de TODOS los ítems antes de mutar nada — evita que un
+    // for con await corte el loop en el primer faltante (dejando movimientos
+    // ya aplicados y sin informar el resto de los productos con stock corto).
+    const productos = await this.prisma.withTenant(empresaId, (tx) =>
+      tx.producto.findMany({
+        where: { id: { in: pedido.items.map((i) => i.productoId) } },
+        select: { id: true, nombre: true },
+      }),
+    );
+    const nombrePorId = new Map(productos.map((p) => [p.id, p.nombre]));
+
+    const faltantes: string[] = [];
+    for (const item of pedido.items) {
+      const disponible = await this.disponible(empresaId, item.productoId, pedido.almacenId);
+      const requerido = Number(item.cantidad);
+      if (disponible < requerido) {
+        const nombre = nombrePorId.get(item.productoId) ?? item.productoId;
+        faltantes.push(`${nombre}: disponible ${disponible}, se requieren ${requerido}`);
+      }
+    }
+    if (faltantes.length > 0) {
+      throw new BadRequestException(
+        `Stock insuficiente en el almacén para:\n- ${faltantes.join('\n- ')}`,
+      );
+    }
+
     return this.prisma.withTenant(empresaId, async (tx) => {
       for (const item of pedido.items) {
         await this.movimientosService.crearEnTransaccion(tx, empresaId, {
@@ -261,5 +288,13 @@ export class PedidosInternosService {
       () => this.prisma.withTenant(empresaId, (tx) => tx.producto.findFirst({ where: { id: productoId, empresaId } })),
       `El producto ${productoId} no existe o no pertenece a esta empresa`,
     );
+  }
+
+  /** Mismo criterio que MovimientosService/DespachosService: bucket sin asignar + ubicaciones del Mapa de Almacén. */
+  private async disponible(empresaId: string, productoId: string, almacenId: string): Promise<number> {
+    const filas = await this.prisma.withTenant(empresaId, (tx) =>
+      tx.inventario.findMany({ where: { productoId, almacenId } }),
+    );
+    return calcularDisponibleTotal(filas);
   }
 }

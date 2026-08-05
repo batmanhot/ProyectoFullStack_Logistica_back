@@ -278,6 +278,11 @@ model Proveedor {
   // Portal de Proveedores vigente. Se incrementa cada vez que se regenera el
   // link (PortalProveedorService.generarLink).
   portalTokenVersion Int @default(0)
+  // Módulo de Importación (2026-08-04): proveedor extranjero — informativo,
+  // no condiciona nada por sí solo (lo que activa el flujo de importación es
+  // OrdenCompra.esImportacion).
+  paisOrigen        String?
+  monedaNegociacion String  @default("PEN")
 
   productos     Producto[]
   ordenesCompra OrdenCompra[]
@@ -437,6 +442,8 @@ model Cliente {
   notas          String?
   activo      Boolean  @default(true)
   createdAt   DateTime @default(now())
+  listaPrecioId String?
+  listaPrecio   ListaPrecios? @relation(fields: [listaPrecioId], references: [id])
   // Auditoría de seguridad 2026-07-29 (Hallazgo Alto #10): revoca el link del
   // Portal de Clientes vigente. Se incrementa cada vez que se regenera el link
   // (PortalService.generarLink) — cualquier token firmado antes deja de servir.
@@ -462,6 +469,37 @@ enum EstadoOrdenCompra {
   CANCELADA
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Módulo de Importación (2026-08-04) — extiende Orden de Compra en vez de
+// crear un módulo paralelo (decisión con el usuario). Una OC de importación
+// es una OrdenCompra normal con esImportacion=true, que además recorre un
+// estadoLogistico independiente del `estado` de recepción de siempre:
+//
+//   EN_ORIGEN → EN_TRANSITO → EN_ADUANA → NACIONALIZADA
+//
+// Al llegar a NACIONALIZADA se calcula el landed cost (prorrateo de
+// GastoImportacion por valor FOB + conversión con tipoCambio) y se guarda en
+// OrdenCompraItem.costoUnitarioReal — ese es el costo que usa `recibir()`
+// para el Movimiento ENTRADA, no el costoUnitario FOB pactado. Por eso
+// `recibir()` exige NACIONALIZADA cuando esImportacion=true: no tiene
+// sentido meter stock a Inventario/Kardex antes de conocer el costo real.
+// ─────────────────────────────────────────────────────────────────
+enum EstadoLogisticoImportacion {
+  EN_ORIGEN
+  EN_TRANSITO
+  EN_ADUANA
+  NACIONALIZADA
+}
+
+enum TipoGastoImportacion {
+  FLETE
+  SEGURO
+  ARANCEL
+  AGENTE_ADUANA
+  ALMACENAJE
+  OTRO
+}
+
 model OrdenCompra {
   id           String            @id @default(cuid())
   empresaId    String
@@ -480,8 +518,19 @@ model OrdenCompra {
   notas        String?
   createdAt    DateTime          @default(now())
 
-  items      OrdenCompraItem[]
-  facturaB2B FacturaB2B?
+  // Importación — todos opcionales, solo tienen sentido si esImportacion=true
+  esImportacion          Boolean                     @default(false)
+  moneda                 String                      @default("PEN")
+  tipoCambio             Decimal?                    @db.Decimal(10, 4)
+  incoterm               String?
+  estadoLogistico        EstadoLogisticoImportacion?
+  numeroFacturaComercial String?
+  numeroBL               String?
+  numeroDUA              String?
+
+  items             OrdenCompraItem[]
+  facturaB2B        FacturaB2B?
+  gastosImportacion GastoImportacion[]
 
   @@unique([empresaId, numero])
   @@index([empresaId])
@@ -489,16 +538,31 @@ model OrdenCompra {
 }
 
 model OrdenCompraItem {
-  id               String      @id @default(cuid())
-  ordenCompraId    String
-  ordenCompra      OrdenCompra @relation(fields: [ordenCompraId], references: [id], onDelete: Cascade)
-  productoId       String
-  producto         Producto    @relation(fields: [productoId], references: [id])
-  cantidad         Decimal     @db.Decimal(12, 2)
-  costoUnitario    Decimal     @db.Decimal(12, 2)
-  cantidadRecibida Decimal     @default(0) @db.Decimal(12, 2)
+  id                String      @id @default(cuid())
+  ordenCompraId     String
+  ordenCompra       OrdenCompra @relation(fields: [ordenCompraId], references: [id], onDelete: Cascade)
+  productoId        String
+  producto          Producto    @relation(fields: [productoId], references: [id])
+  cantidad          Decimal     @db.Decimal(12, 2)
+  costoUnitario     Decimal     @db.Decimal(12, 2)
+  cantidadRecibida  Decimal     @default(0) @db.Decimal(12, 2)
+  // Landed cost calculado al nacionalizar (ver GastoImportacion) — null hasta entonces.
+  costoUnitarioReal Decimal?    @db.Decimal(12, 2)
 
   @@map("orden_compra_items")
+}
+
+model GastoImportacion {
+  id            String               @id @default(cuid())
+  ordenCompraId String
+  ordenCompra   OrdenCompra          @relation(fields: [ordenCompraId], references: [id], onDelete: Cascade)
+  tipo          TipoGastoImportacion
+  monto         Decimal              @db.Decimal(12, 2)
+  moneda        String               @default("PEN")
+  notas         String?
+  createdAt     DateTime             @default(now())
+
+  @@map("gastos_importacion")
 }
 
 // ── Cotización = RFQ a proveedores (NO es cotización de venta — ver Proforma).
@@ -579,6 +643,13 @@ enum EstadoProforma {
   ACEPTADA
   RECHAZADA
   VENCIDA
+  CONVERTIDA // ya generó su Despacho vía convertirADespacho() — ver Proforma.despachoId
+}
+
+// Contado = pago inmediato, no debería generar CxC. Crédito = pago diferido.
+enum FormaPago {
+  CONTADO
+  CREDITO
 }
 
 model Proforma {
@@ -591,11 +662,16 @@ model Proforma {
   fecha            DateTime       @default(now())
   fechaVencimiento DateTime?
   estado           EstadoProforma @default(BORRADOR)
+  formaPago        FormaPago      @default(CREDITO)
   subtotal         Decimal        @db.Decimal(12, 2)
   igv              Decimal        @db.Decimal(12, 2)
   total            Decimal        @db.Decimal(12, 2)
   notas            String?
   createdAt        DateTime       @default(now())
+  despachoId       String?        @unique // se completa al convertir en Despacho real
+  despacho         Despacho?      @relation(fields: [despachoId], references: [id])
+  listaPrecioId    String? // lista de precios usada para sugerir los precios, solo trazabilidad
+  listaPrecio      ListaPrecios?  @relation(fields: [listaPrecioId], references: [id])
 
   items ProformaItem[]
 
@@ -725,6 +801,7 @@ model Despacho {
   almacenId        String
   almacen          Almacen        @relation(fields: [almacenId], references: [id])
   estado           EstadoDespacho @default(PEDIDO)
+  formaPago        FormaPago      @default(CREDITO)
   fecha            DateTime       @default(now())
   fechaEntrega     DateTime? // entrega ESTIMADA (la pide el cliente)
   fechaDespacho    DateTime? // se setea al pasar a DESPACHADO (salida real del almacén)
@@ -747,6 +824,7 @@ model Despacho {
   cuentasPorCobrar        CuentaPorCobrar[]
   empaque                 Empaque?
   pedidoPortal            PedidoPortal?
+  proformaOrigen          Proforma? // back-relation de Proforma.despachoId — la proforma que se convirtió en este despacho, si aplica
   guiaRemisionElectronica GuiaRemisionElectronica?
   listaPicking            ListaPicking?
 
@@ -1449,6 +1527,9 @@ model ListaPrecios {
   precios   Json     @default("{}") // { productoId: precioEspecial }
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  clientes  Cliente[]
+  proformas Proforma[]
 
   @@index([empresaId])
   @@map("listas_precios")
