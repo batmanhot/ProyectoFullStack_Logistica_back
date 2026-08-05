@@ -128,6 +128,23 @@ solo).
   `AuditoriaInterceptor` — los services normalmente no llaman a
   `AuditoriaService.registrar()` a mano.
 
+### 2.5 Patrones de servicio
+
+- **Validar antes de mutar, en batch**: cuando un service necesita validar
+  la existencia de varios registros relacionados (ítems de una proforma,
+  de un pedido interno), traerlos con **una sola consulta**
+  `findMany({ where: { id: { in: ids }, empresaId } })` y comparar contra
+  el set esperado — no un `for (const item of items) { await validar(item) }`
+  secuencial (N round-trips a la base y, si el loop ya mutó algo antes de
+  fallar en el ítem N, deja mutaciones a medias). Patrón usado en
+  `PedidosInternosService.entregar()`, `CuentasPorCobrarService` y
+  `ProformasService.create()` — si aparece un `for...await` de validación
+  nuevo, preferir este patrón desde el inicio.
+- **`assertExists()`** (`common/utils/assert-exists.util.ts`): helper para
+  el caso simple de "traer un registro por id o lanzar una excepción" —
+  usarlo en vez de reimplementar el `if (!x) throw ...` a mano en cada
+  service.
+
 ---
 
 ## 3. Estructura del proyecto
