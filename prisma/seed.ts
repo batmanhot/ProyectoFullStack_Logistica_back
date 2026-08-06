@@ -66,6 +66,15 @@ const ROLES_BASE: { codigo: string; label: string; permisos: string[] }[] = [
       // productos en categorías; crear/borrar almacenes completos sigue
       // siendo exclusivo de Supervisor/Gerente (mismo criterio que 'ajustes').
       'categorias',
+      // Fase 1 vista móvil (2026-08-05): el Almacenero necesita ver el pipeline
+      // de despachos y operar el picking desde el hub móvil — antes no tenía
+      // ninguno de los dos y el backend le devolvía 403 en /picking/*.
+      'despachos', 'picking',
+      // Mismo hallazgo: ya tenía 'alertas', pero sin 'ordenes' ni 'lotes-series'
+      // las alertas de OC pendiente y de vencimiento de lote quedaban 403 —
+      // la página de Alertas de escritorio también estaba rota para este rol,
+      // no solo el hub móvil nuevo.
+      'ordenes', 'lotes-series',
     ], // sin 'ajustes' ni 'almacenes' — autoridad exclusiva del Supervisor de Almacén
   },
   {
@@ -82,6 +91,18 @@ const ROLES_BASE: { codigo: string; label: string; permisos: string[] }[] = [
     codigo: 'coordinador-transporte',
     label: 'Coordinador de Transporte',
     permisos: ['dashboard', 'alertas', 'despachos', 'transportes', 'flota', 'clientes', 'reportes'],
+  },
+  {
+    // Fase 3 vista móvil (2026-08-05): rol de piso para el transportista —
+    // confirma la entrega de SUS despachos asignados (Usuario.transportistaId,
+    // ver schema.prisma) desde el hub móvil. 'transportes' se sumó el
+    // 2026-08-06 para que además vea y gestione SUS rutas asignadas
+    // (Transportes > Rutas y Salidas, botón "Confirmar Entrega" por parada);
+    // el frontend restringe esa pantalla para chofer a solo sus rutas y
+    // oculta Nueva Ruta/Cancelar/Transportistas — no administra el módulo.
+    codigo: 'chofer',
+    label: 'Chofer',
+    permisos: ['dashboard', 'alertas', 'despachos', 'transportes'],
   },
   {
     codigo: 'contable-finanzas',
@@ -108,8 +129,8 @@ const EMPRESAS_DEMO = [
     ruc: '20100000001',
     email: 'contacto@dlnorte.demo',
     origen: 'demo',
-    // empresarial: única forma de que los 10 roles sembrados (Fase 2) se
-    // puedan probar todos sin que el plan bloquee alguno (Fase 3b).
+    // empresarial: única forma de que los 11 roles sembrados (Fase 2 + Fase 3
+    // vista móvil) se puedan probar todos sin que el plan bloquee alguno (Fase 3b).
     plan: 'empresarial',
     usuarios: [
       { email: 'admin@dlnorte.demo',       nombre: 'Admin DL Norte',       rolCodigo: 'admin' },
@@ -119,6 +140,10 @@ const EMPRESAS_DEMO = [
       { email: 'compras@dlnorte.demo',     nombre: 'Analista Compras DL Norte', rolCodigo: 'analista-compras' },
       { email: 'comercial@dlnorte.demo',   nombre: 'Ejecutivo Comercial DL Norte', rolCodigo: 'ejecutivo-comercial' },
       { email: 'transporte@dlnorte.demo',  nombre: 'Coordinador Transporte DL Norte', rolCodigo: 'coordinador-transporte' },
+      // Sin transportistaId acá — prisma:seed no crea Transportistas (eso lo hace
+      // DatosService.sembrarDlNorte, disparado por "Restaurar Datos Demo"), que
+      // además re-vincula este usuario a un transportista válido en cada reset.
+      { email: 'chofer@dlnorte.demo',      nombre: 'Chofer DL Norte',      rolCodigo: 'chofer' },
       { email: 'contable@dlnorte.demo',    nombre: 'Contable DL Norte',    rolCodigo: 'contable-finanzas' },
       { email: 'auditor@dlnorte.demo',     nombre: 'Auditor DL Norte',     rolCodigo: 'auditor' },
       { email: 'solicitante@dlnorte.demo', nombre: 'Solicitante DL Norte', rolCodigo: 'solicitante' },

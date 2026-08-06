@@ -26,17 +26,18 @@ export class DespachosService {
     private readonly pickingService: PickingService,
   ) {}
 
-  findAll(empresaId: string, filtros: { clienteId?: string; estado?: string } = {}) {
+  findAll(empresaId: string, filtros: { clienteId?: string; estado?: string; transportistaId?: string } = {}) {
     return this.prisma.withTenant(empresaId, (tx) =>
       tx.despacho.findMany({
         where: {
           empresaId,
           ...(filtros.clienteId && { clienteId: filtros.clienteId }),
           ...(filtros.estado && { estado: validarEnum(filtros.estado, Object.values(EstadoDespacho)) }),
+          ...(filtros.transportistaId && { transportistaId: filtros.transportistaId }),
         },
         include: {
-          items: true,
-          cliente: { select: { razonSocial: true } },
+          items: { include: { producto: { select: { nombre: true, sku: true, unidadMedida: true } } } },
+          cliente: { select: { razonSocial: true, ruc: true, contacto: true, telefono: true, direccion: true } },
           transportista: { select: { nombre: true } },
           empaque: { select: { estado: true } },
         },
@@ -50,7 +51,11 @@ export class DespachosService {
     const despacho = await this.prisma.withTenant(empresaId, (tx) =>
       tx.despacho.findFirst({
         where: { id, empresaId },
-        include: { items: true, transportista: { select: { nombre: true } } },
+        include: {
+          items: { include: { producto: { select: { nombre: true, sku: true, unidadMedida: true } } } },
+          cliente: { select: { razonSocial: true, ruc: true, contacto: true, telefono: true, direccion: true } },
+          transportista: { select: { nombre: true } },
+        },
       }),
     );
     if (!despacho) throw new NotFoundException('Despacho no encontrado');
@@ -299,13 +304,18 @@ export class DespachosService {
     });
   }
 
-  /** DESPACHADO -> ENTREGADO (confirmación de recepción del cliente — sin efecto en stock). */
-  async entregar(empresaId: string, id: string, dto: EntregarDto = {}) {
+  /**
+   * DESPACHADO -> ENTREGADO (confirmación de recepción del cliente — sin efecto en stock).
+   * El endpoint HTTP exige receptorNombre/evidenciaFoto (ver EntregarDto, ValidationPipe global) —
+   * este método interno acepta `Partial<EntregarDto>` porque RutasService.marcarParada() lo llama
+   * sin evidencia al resolver una parada desde el flujo de Rutas, que no captura foto/receptor.
+   */
+  async entregar(empresaId: string, id: string, dto: Partial<EntregarDto> = {}) {
     return this.prisma.withTenant(empresaId, (tx) => this.entregarEnTransaccion(tx, empresaId, id, dto));
   }
 
   /** Misma lógica, pero con `tx` ya abierto — usado por RutasService al marcar una parada ENTREGADO. */
-  async entregarEnTransaccion(tx: PrismaClient, empresaId: string, id: string, dto: EntregarDto = {}) {
+  async entregarEnTransaccion(tx: PrismaClient, empresaId: string, id: string, dto: Partial<EntregarDto> = {}) {
     const despacho = await tx.despacho.findFirst({ where: { id, empresaId } });
     if (!despacho) throw new NotFoundException('Despacho no encontrado');
     if (despacho.estado !== 'DESPACHADO') {

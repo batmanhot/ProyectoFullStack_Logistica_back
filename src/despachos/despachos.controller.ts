@@ -18,8 +18,9 @@ export class DespachosController {
     @TenantId() empresaId: string,
     @Query('clienteId') clienteId?: string,
     @Query('estado') estado?: string,
+    @Query('transportistaId') transportistaId?: string,
   ) {
-    return this.despachosService.findAll(empresaId, { clienteId, estado });
+    return this.despachosService.findAll(empresaId, { clienteId, estado, transportistaId });
   }
 
   @Get(':id')

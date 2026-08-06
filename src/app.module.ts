@@ -47,6 +47,8 @@ import { ListasPreciosModule } from './listas-precios/listas-precios.module';
 import { DatosModule } from './datos/datos.module';
 import { PanelAuditoriaModule } from './panel-auditoria/panel-auditoria.module';
 import { IncidenciasModule } from './incidencias/incidencias.module';
+import { PushModule } from './push/push.module';
+import { EmailModule } from './email/email.module';
 
 @Module({
   imports: [
@@ -113,6 +115,8 @@ import { IncidenciasModule } from './incidencias/incidencias.module';
     PanelAuditoriaModule,
     // Registro de Incidencias — propuesta aprobada 2026-07-31 (ver informe en conversación)
     IncidenciasModule,
+    // Fase 2 vista móvil (2026-08-05) — Web Push de alertas críticas, cron cada 30min
+    PushModule,
     ConfiguracionModule,
     // Fase 9 — Endpoints públicos (landing + planes sin auth) para la landing page pública
     PublicModule,
@@ -120,6 +124,8 @@ import { IncidenciasModule } from './incidencias/incidencias.module';
     ListasPreciosModule,
     // Datos / Reset — limpiar operativos y restaurar demo
     DatosModule,
+    // Envío real de documentos por correo (Compartir → Correo), 2026-08-06
+    EmailModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

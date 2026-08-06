@@ -21,4 +21,9 @@ export class CreateUsuarioDto {
   @IsOptional()
   @IsString()
   areaId?: string;
+
+  /** Fase 3 vista móvil (2026-08-05) — solo relevante para usuarios con rol 'chofer'. */
+  @IsOptional()
+  @IsString()
+  transportistaId?: string;
 }

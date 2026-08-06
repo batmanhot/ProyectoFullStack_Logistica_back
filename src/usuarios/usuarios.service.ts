@@ -19,6 +19,7 @@ const SELECT_PUBLICO = {
   updatedAt: true,
   rol: { select: { id: true, codigo: true, label: true } },
   area: { select: { id: true, nombre: true, codigo: true } }, // Fase 6
+  transportista: { select: { id: true, nombre: true, placa: true } }, // Fase 3 vista móvil
 } as const;
 
 @Injectable()
@@ -46,6 +47,7 @@ export class UsuariosService {
   async create(empresaId: string, dto: CreateUsuarioDto) {
     await this.validarRol(empresaId, dto.rolId);
     if (dto.areaId) await this.validarArea(empresaId, dto.areaId);
+    if (dto.transportistaId) await this.validarTransportista(empresaId, dto.transportistaId);
     const passwordHash = await bcrypt.hash(dto.password, 12);
 
     try {
@@ -58,6 +60,7 @@ export class UsuariosService {
             passwordHash,
             rolId: dto.rolId,
             areaId: dto.areaId,
+            transportistaId: dto.transportistaId,
           },
           select: SELECT_PUBLICO,
         }),
@@ -79,6 +82,9 @@ export class UsuariosService {
     if (dto.areaId) {
       await this.validarArea(empresaId, dto.areaId);
     }
+    if (dto.transportistaId) {
+      await this.validarTransportista(empresaId, dto.transportistaId);
+    }
 
     const data: Record<string, unknown> = {
       ...(dto.nombre !== undefined && { nombre: dto.nombre }),
@@ -86,6 +92,7 @@ export class UsuariosService {
       ...(dto.rolId !== undefined && { rolId: dto.rolId }),
       ...(dto.activo !== undefined && { activo: dto.activo }),
       ...(dto.areaId !== undefined && { areaId: dto.areaId }),
+      ...(dto.transportistaId !== undefined && { transportistaId: dto.transportistaId }),
     };
 
     // password solo se actualiza si se envía explícitamente (sección 5 — Usuario).
@@ -138,6 +145,17 @@ export class UsuariosService {
     return assertExists(
       () => this.prisma.withTenant(empresaId, (tx) => tx.areaInterna.findFirst({ where: { id: areaId, empresaId } })),
       'El área indicada no existe o no pertenece a esta empresa',
+    );
+  }
+
+  /** Fase 3 vista móvil (2026-08-05) — mismo criterio que validarArea. */
+  private validarTransportista(empresaId: string, transportistaId: string) {
+    return assertExists(
+      () =>
+        this.prisma.withTenant(empresaId, (tx) =>
+          tx.transportista.findFirst({ where: { id: transportistaId, empresaId } }),
+        ),
+      'El transportista indicado no existe o no pertenece a esta empresa',
     );
   }
 }

@@ -1,14 +1,17 @@
-import { IsOptional, IsString } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
+// Trazabilidad de entrega (2026-08-05): nombre del receptor y foto de
+// evidencia son obligatorios para confirmar — antes eran opcionales tanto
+// acá como en el frontend, y no había ninguna validación real bloqueando.
 export class EntregarDto {
-  @IsOptional()
   @IsString()
-  receptorNombre?: string;
+  @IsNotEmpty()
+  receptorNombre: string;
 
-  /** Data URI base64 de la foto de evidencia (opcional). */
-  @IsOptional()
+  /** Data URI base64 de la foto de evidencia. */
   @IsString()
-  evidenciaFoto?: string;
+  @IsNotEmpty()
+  evidenciaFoto: string;
 
   @IsOptional()
   @IsString()

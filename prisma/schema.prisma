@@ -104,6 +104,11 @@ model Usuario {
   // aplica a usuarios con ese rol; el resto no necesita área.
   areaId       String?
   area         AreaInterna? @relation(fields: [areaId], references: [id])
+  // Fase 3 vista móvil (2026-08-05) — mismo patrón que areaId/solicitante:
+  // el rol 'chofer' queda atado a un Transportista específico, para filtrar
+  // "mis despachos asignados" en el hub móvil. Nullable, solo aplica a ese rol.
+  transportistaId String?
+  transportista    Transportista? @relation(fields: [transportistaId], references: [id])
   activo       Boolean      @default(true)
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
@@ -114,6 +119,7 @@ model Usuario {
   inventariosFisicosRealizados InventarioFisico[]
   mantenimientosRegistrados    MantenimientoVehiculo[]
   listasPickingAsignadas       ListaPicking[]
+  pushSubscriptions            PushSubscription[]
 
   @@unique([empresaId, email]) // email único POR tenant, no global
   @@index([empresaId])
@@ -774,6 +780,7 @@ model Transportista {
   rutas          Ruta[]
   despachos      Despacho[]
   vehiculosFlota VehiculoFlota[]
+  usuarios       Usuario[]
 
   @@index([empresaId])
   @@map("transportistas")
@@ -1534,6 +1541,46 @@ model ListaPrecios {
 
   @@index([empresaId])
   @@map("listas_precios")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Fase 2 — Web Push (notificaciones de alertas críticas fuera de la app)
+
+// Sin RLS propia — siempre se accede por usuarioId (JWT del dueño) o vía la
+// relación con Usuario dentro de un withTenant ya scopeado (cron). empresaId
+// va denormalizado (no es la fuente de verdad, esa es Usuario.empresaId) solo
+// para el chequeo barato "¿hay algún interesado en esta empresa?" del cron
+// — sin esto, ese chequeo tendría que unirse con la tabla Usuario, que SÍ
+// tiene RLS, y quedaría en 0 filas al correr fuera de un withTenant.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  usuarioId String
+  usuario   Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  empresaId String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([usuarioId])
+  @@index([empresaId])
+  @@map("push_subscriptions")
+}
+
+// Dedup del cron de alertas críticas: evita reenviar la misma alerta cada
+// 30 minutos mientras siga vigente. clave = productoId (stock_agotado,
+// stock_critico, vencimiento). Se borra cuando la condición deja de
+// cumplirse, para que si reaparece más adelante avise de nuevo.
+model AlertaNotificada {
+  id              String   @id @default(cuid())
+  empresaId       String
+  tipo            String
+  clave           String
+  fechaNotificada DateTime @default(now())
+
+  @@unique([empresaId, tipo, clave])
+  @@map("alertas_notificadas")
 }
 
 // ─────────────────────────────────────────────────────────────────

@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
+
+// Mismo password demo que prisma/seed.ts (DEMO_PASSWORD) — se repite acá
+// porque seed.ts es un script standalone, no un módulo importable por Nest.
+const DEMO_PASSWORD = 'StockPro2026!';
 
 @Injectable()
 export class DatosService {
@@ -401,6 +406,32 @@ export class DatosService {
       tx.usuario.findFirst({ where: { empresaId, rol: { codigo: 'admin' } } }),
       tx.usuario.findFirst({ where: { empresaId, rol: { codigo: 'almacenero' } } }),
     ]);
+
+    // ── Usuario Chofer — se asegura en cada "Restaurar Demo" ───────────────
+    // El rol 'chofer' depende de un Transportista (Usuario.transportistaId).
+    // Como "Restaurar Demo" borra y vuelve a crear los transportistas, el
+    // vínculo queda en null si no se refresca (onDelete: SetNull implícito de
+    // Prisma en un campo FK opcional). Acá se garantiza, en cada reset, que
+    // exista al menos un usuario Chofer demo y que CUALQUIER usuario con rol
+    // Chofer en este tenant — el de acá o uno creado a mano desde Usuarios —
+    // quede vinculado a un transportista válido.
+    const rolChofer = await tx.rol.findFirst({ where: { codigo: 'chofer', empresaId: null } });
+    if (rolChofer) {
+      const usrChofer = await tx.usuario.findFirst({ where: { empresaId, rolId: rolChofer.id } });
+      if (!usrChofer) {
+        await tx.usuario.create({
+          data: {
+            empresaId, nombre: 'Chofer DL Norte', email: 'chofer@dlnorte.demo',
+            passwordHash: await bcrypt.hash(DEMO_PASSWORD, 12),
+            rolId: rolChofer.id, transportistaId: transCarlos.id,
+          },
+        });
+      }
+      await tx.usuario.updateMany({
+        where: { empresaId, rolId: rolChofer.id },
+        data: { transportistaId: transCarlos.id },
+      });
+    }
 
     // ══════════════════════════════════════════════════════════════════════
     // ÓRDENES DE COMPRA (5 — una por cada EstadoOrdenCompra)

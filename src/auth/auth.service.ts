@@ -12,6 +12,7 @@ type UsuarioConRol = {
   passwordHash: string;
   rolId: string;
   areaId: string | null;
+  transportistaId: string | null;
   activo: boolean;
   tokenVersion: number;
   rol: {
@@ -255,6 +256,7 @@ export class AuthService {
         email: usuario.email,
         empresaId: usuario.empresaId,
         areaId: usuario.areaId,
+        transportistaId: usuario.transportistaId,
         rol: {
           codigo: usuario.rol.codigo,
           label: usuario.rol.label,
