@@ -28,7 +28,7 @@
 -- CREATE ROLE / ALTER ROLE se ejecuta desde create-app-role.ts (necesita
 -- interpolar la contraseña, Postgres no admite bind params en DDL).
 
-GRANT CONNECT ON DATABASE stockpro TO stockpro_app;
+GRANT CONNECT ON DATABASE __DBNAME__ TO stockpro_app;
 GRANT USAGE ON SCHEMA public TO stockpro_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO stockpro_app;
 

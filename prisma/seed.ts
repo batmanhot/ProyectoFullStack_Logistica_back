@@ -432,18 +432,23 @@ async function main() {
     }
   }
 
-  // 3) PlatformAdmin de prueba (Fase 7d) — login separado en /api/admin/auth/login
-  const adminPasswordHash = await bcrypt.hash(PLATFORM_ADMIN_DEMO.password, 12);
+  // 3) PlatformAdmin (Fase 7d) — login separado en /api/admin/auth/login.
+  // En producción, pasar PLATFORM_ADMIN_EMAIL/PLATFORM_ADMIN_PASSWORD como
+  // variables de entorno (nunca hardcodear la credencial real acá ni en el
+  // historial de git) — sin esas variables, cae al admin demo de siempre.
+  const platformAdminEmail = process.env.PLATFORM_ADMIN_EMAIL || PLATFORM_ADMIN_DEMO.email;
+  const platformAdminPassword = process.env.PLATFORM_ADMIN_PASSWORD || PLATFORM_ADMIN_DEMO.password;
+  const adminPasswordHash = await bcrypt.hash(platformAdminPassword, 12);
   const platformAdmin = await prisma.platformAdmin.upsert({
-    where: { email: PLATFORM_ADMIN_DEMO.email },
+    where: { email: platformAdminEmail },
     update: {},
     create: {
-      email: PLATFORM_ADMIN_DEMO.email,
+      email: platformAdminEmail,
       nombre: PLATFORM_ADMIN_DEMO.nombre,
       passwordHash: adminPasswordHash,
     },
   });
-  console.log(`  ✓ PlatformAdmin: ${platformAdmin.email} / password demo: ${PLATFORM_ADMIN_DEMO.password}`);
+  console.log(`  ✓ PlatformAdmin: ${platformAdmin.email}`);
 
   // 4) Catálogo base de PlanSaaS (Fase 7d)
   for (const p of PLANES_BASE) {

@@ -32,12 +32,17 @@ async function main() {
   `);
   console.log('  ✓ Rol stockpro_app creado/actualizado');
 
+  const [{ current_database: dbName }] = await prisma.$queryRawUnsafe<
+    { current_database: string }[]
+  >('SELECT current_database()');
+
   const sqlPath = path.join(__dirname, 'sql', 'create_app_role.sql');
   const sql = fs
     .readFileSync(sqlPath, 'utf-8')
     .split('\n')
     .filter((line) => !line.trim().startsWith('--'))
-    .join('\n');
+    .join('\n')
+    .replace(/__DBNAME__/g, `"${dbName}"`);
 
   for (const stmt of sql.split(';').map((s) => s.trim()).filter(Boolean)) {
     await prisma.$executeRawUnsafe(stmt);
