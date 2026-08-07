@@ -107,10 +107,12 @@ solo).
   `Empresa.plan → PlanSaaS.modulosIncluidos` (`permiso-plan-map.ts` mapea
   cada `modulo` granular a uno de los 9 grupos de plan). Un rol con
   permiso `'*'` (owner/admin) evita ese segundo cruce.
-- Catálogo base de 10 roles + Auditor sembrado en `prisma/seed.ts`
-  (`ROLES_BASE`): owner, admin, gerente-operaciones, supervisor,
-  almacenero, analista-compras, ejecutivo-comercial,
-  coordinador-transporte, contable-finanzas, solicitante, auditor.
+- Catálogo base de 12 roles sembrado en `prisma/seed.ts` (`ROLES_BASE`):
+  owner, admin, gerente-operaciones, supervisor, almacenero,
+  analista-compras, ejecutivo-comercial, coordinador-transporte,
+  **chofer** (rol de piso para el transportista — vista móvil reducida,
+  atado a `Usuario.transportistaId`, ver `PushService`/`RutasService`),
+  contable-finanzas, solicitante, auditor (solo lectura, panel propio).
 
 ### 2.4 Contrato de API
 
@@ -197,8 +199,24 @@ src/
 ├── auditoria/  panel-auditoria/  configuracion/
 │
 │  ── Público y utilidades (Fase 9) ──
-└── public/  listas-precios/  datos/
+├── public/  listas-precios/  datos/
+│
+│  ── Picking, incidencias, notificaciones y correo (Fase 10) ──
+└── picking/  incidencias/  push/  email/
 ```
+
+- `push/` — notificaciones Web Push de alertas críticas (stock agotado,
+  vencimientos), un cron cada 30 min con dedup de 24h por alerta
+  (`PushService`). El "subject" VAPID (contacto de abuso ante
+  Google/Mozilla/Apple) se lee de `LandingConfig.data.contacto.emailSoporte`
+  (editable desde el panel SaaS, Admin SaaS → Landing → Contacto) en cada
+  corrida del cron, con `VAPID_SUBJECT` del `.env` como respaldo si ese
+  campo está vacío — así se actualiza sin redeploy.
+- `email/` — envío real de documentos (Guía de Remisión, Orden de Compra)
+  por correo: `nodemailer` (SMTP) + `puppeteer` (Chromium headless, para
+  convertir a PDF real el mismo HTML que arma `pdfTemplates.js` en el
+  frontend, sin duplicar plantillas). También genera el PDF sin enviarlo
+  (usado por el flujo de compartir por WhatsApp).
 
 Cada módulo de negocio sigue el mismo patrón: `*.module.ts`,
 `*.controller.ts` (fino, sin lógica), `*.service.ts` (reglas de negocio +
@@ -254,6 +272,9 @@ Copiar `.env.example` a `.env` y completar:
 | `FRONTEND_URL` | Origin permitido por CORS — obligatorio si `NODE_ENV=production` |
 | `NODE_ENV` | `production` activa las validaciones estrictas (CORS, demo-login) |
 | `ALLOW_DEMO_LOGIN` | Solo necesaria si `NODE_ENV=production` y se quiere permitir el acceso demo igual |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | Par de claves Web Push (`node -e "console.log(require('web-push').generateVAPIDKeys())"`) — `VAPID_PUBLIC_KEY` debe coincidir con `VITE_VAPID_PUBLIC_KEY` del frontend |
+| `VAPID_SUBJECT` | Contacto `mailto:` de respaldo si `LandingConfig.data.contacto.emailSoporte` está vacío (ver `push/`) |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM_NAME`, `SMTP_FROM_EMAIL` | Envío real de documentos por correo (ver `email/`). Con Gmail: host `smtp.gmail.com`, puerto `587`, `SMTP_PASS` = una "contraseña de aplicación" (no la contraseña normal, requiere 2FA activado) |
 
 Los 4 secretos JWT deben ser valores aleatorios reales y distintos entre
 sí — el arranque falla si detecta un placeholder o una colisión. Generar
@@ -300,6 +321,7 @@ ninguno), con un usuario por rol. Password de todos: `StockPro2026!`.
 | Analista de Compras | `compras@dlnorte.demo` |
 | Ejecutivo Comercial | `comercial@dlnorte.demo` |
 | Coordinador de Transporte | `transporte@dlnorte.demo` |
+| Chofer | `chofer@dlnorte.demo` |
 | Contable / Finanzas | `contable@dlnorte.demo` |
 | Auditor (solo lectura) | `auditor@dlnorte.demo` |
 | Solicitante | `solicitante@dlnorte.demo` |

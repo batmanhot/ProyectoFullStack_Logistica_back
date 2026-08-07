@@ -129,7 +129,7 @@ const EMPRESAS_DEMO = [
     ruc: '20100000001',
     email: 'contacto@dlnorte.demo',
     origen: 'demo',
-    // empresarial: única forma de que los 11 roles sembrados (Fase 2 + Fase 3
+    // empresarial: única forma de que los 12 roles sembrados (Fase 2 + Fase 3
     // vista móvil) se puedan probar todos sin que el plan bloquee alguno (Fase 3b).
     plan: 'empresarial',
     usuarios: [

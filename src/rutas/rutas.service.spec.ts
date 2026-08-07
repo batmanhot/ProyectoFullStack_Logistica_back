@@ -85,9 +85,17 @@ describe('RutasService', () => {
       };
       prismaMock.withTenant.mockImplementation((_e: string, fn: any) => fn(txMock));
 
-      const resultado = await service.marcarParada('e1', 'r1', 'd1', { estado: 'ENTREGADO' } as any);
+      const resultado = await service.marcarParada('e1', 'r1', 'd1', {
+        estado: 'ENTREGADO',
+        receptorNombre: 'Juan Pérez',
+        evidenciaFoto: 'data:image/png;base64,xxx',
+      } as any);
 
-      expect(despachosMock.entregarEnTransaccion).toHaveBeenCalledWith(txMock, 'e1', 'd1');
+      expect(despachosMock.entregarEnTransaccion).toHaveBeenCalledWith(txMock, 'e1', 'd1', {
+        receptorNombre: 'Juan Pérez',
+        evidenciaFoto: 'data:image/png;base64,xxx',
+        evidenciaNotas: undefined,
+      });
       expect(txMock.parada.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 'p1' },

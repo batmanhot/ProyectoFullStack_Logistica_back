@@ -149,7 +149,11 @@ export class RutasService {
 
     return this.prisma.withTenant(empresaId, async (tx) => {
       if (dto.estado === 'ENTREGADO') {
-        await this.despachosService.entregarEnTransaccion(tx, empresaId, despachoId);
+        await this.despachosService.entregarEnTransaccion(tx, empresaId, despachoId, {
+          receptorNombre: dto.receptorNombre,
+          evidenciaFoto: dto.evidenciaFoto,
+          evidenciaNotas: dto.evidenciaNotas,
+        });
       }
 
       const esResolucionFinal = dto.estado === 'ENTREGADO' || dto.estado === 'FALLIDO';

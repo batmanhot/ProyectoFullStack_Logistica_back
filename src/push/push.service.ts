@@ -3,6 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaClient } from '@prisma/client';
 import * as webpush from 'web-push';
 import { PrismaService } from '../prisma/prisma.service';
+import { LandingService } from '../admin/landing/landing.service';
 import { SubscribePushDto } from './dto/subscribe-push.dto';
 
 // Réplica en el backend de las condiciones "prioridad 1" de generarAlertas()
@@ -23,12 +24,27 @@ interface AlertaCritica {
 export class PushService {
   private readonly logger = new Logger('PushService');
 
-  constructor(private readonly prisma: PrismaService) {
-    webpush.setVapidDetails(
-      process.env.VAPID_SUBJECT || 'mailto:soporte@stockpro.dev',
-      process.env.VAPID_PUBLIC_KEY || '',
-      process.env.VAPID_PRIVATE_KEY || '',
-    );
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly landingService: LandingService,
+  ) {}
+
+  /**
+   * El "subject" VAPID (contacto de abuso ante Google/Mozilla/Apple) se lee del
+   * Email de Soporte configurado en Admin SaaS > Landing > Contacto, no de una
+   * variable de entorno fija — así se puede actualizar sin redeploy. Se refresca
+   * en cada corrida del cron (ver procesarTodasLasEmpresas) en vez de una sola
+   * vez al arrancar, para que un cambio en el panel tenga efecto sin reiniciar
+   * el backend. VAPID_SUBJECT en .env queda solo como respaldo si aún no se
+   * configuró nada en el panel.
+   */
+  private async aplicarVapidDetails() {
+    const landing = await this.landingService.get().catch(() => null);
+    const emailSoporte = (landing?.data as any)?.contacto?.emailSoporte as string | undefined;
+    const subject = emailSoporte
+      ? `mailto:${emailSoporte}`
+      : process.env.VAPID_SUBJECT || 'mailto:soporte@stockpro.dev';
+    webpush.setVapidDetails(subject, process.env.VAPID_PUBLIC_KEY || '', process.env.VAPID_PRIVATE_KEY || '');
   }
 
   subscribe(empresaId: string, usuarioId: string, dto: SubscribePushDto) {
@@ -185,6 +201,7 @@ export class PushService {
       return pendientes.map((alerta) => ({ alerta, suscripciones }));
     });
 
+    if (porEnviar.length > 0) await this.aplicarVapidDetails();
     let enviadas = 0;
     for (const { alerta, suscripciones } of porEnviar) {
       const payload = { title: alerta.titulo, body: alerta.detalle, url: alerta.url };
