@@ -32,7 +32,13 @@ export class EmailService implements OnModuleDestroy {
       port,
       secure: process.env.SMTP_SECURE === 'true' || port === 465,
       auth: { user, pass },
-    });
+      // Muchos contenedores cloud (Render incluido) no tienen salida a
+      // internet por IPv6 — sin esto, Node intenta primero la dirección
+      // AAAA de smtp.gmail.com y falla con ENETUNREACH antes de probar IPv4.
+      // `family` existe en tiempo de ejecución (nodemailer lo reenvía al
+      // socket de Node) pero @types/nodemailer no lo declara — de ahí el `any`.
+      family: 4,
+    } as nodemailer.TransportOptions & { family: number });
     return this.transporter;
   }
 
