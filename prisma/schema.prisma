@@ -45,6 +45,8 @@ model Empresa {
   activo           Boolean   @default(true)
   origen           String    @default("admin_saas") // 'demo' | 'admin_saas' — trazabilidad de cómo se creó
   modoDesarrollo   Boolean   @default(false) // switch en Configuración → Sistema: activa accesos rápidos demo en el Login (solo tiene efecto si origen='demo')
+  formulaValorizacion String @default("PMP") // PMP | FIFO | LIFO — método de valorización de inventario (Configuración → Valorización); ver CapaCosto
+  costeoAutomatico Boolean   @default(false) // kill-switch de rollout: mientras sea false, ENTRADA/SALIDA usan costoUnitario manual como siempre (sin CapaCosto)
   fechaVencimiento DateTime? // vencimiento de la suscripción (Fase 7d)
   notas            String? // notas internas del PlatformAdmin (Fase 7d)
   createdAt        DateTime  @default(now())
@@ -57,6 +59,7 @@ model Empresa {
   proveedores               Proveedor[]
   productos                 Producto[]
   movimientos               Movimiento[]
+  capasCosto                CapaCosto[]
   auditorias                Auditoria[]
   clientes                  Cliente[]
   ordenesCompra             OrdenCompra[]
@@ -329,6 +332,7 @@ model Producto {
   updatedAt    DateTime   @updatedAt
 
   lotes                  LoteProducto[]
+  capasCosto             CapaCosto[]
   movimientos            Movimiento[]
   inventario             Inventario[]
   ordenCompraItems       OrdenCompraItem[]
@@ -361,6 +365,7 @@ model LoteProducto {
   createdAt        DateTime  @default(now())
 
   movimientos Movimiento[]
+  capasCosto  CapaCosto[]
 
   @@unique([productoId, numero])
   @@map("lotes_producto")
@@ -421,9 +426,57 @@ model Movimiento {
   fecha            DateTime       @default(now())
   createdAt        DateTime       @default(now())
 
+  capaCostoOrigen   CapaCosto?         @relation("CapaCostoOrigen")
+  capaCostoConsumos CapaCostoConsumo[] @relation("CapaCostoConsumos")
+
   @@index([empresaId, productoId])
   @@index([empresaId, tipo, fecha])
   @@map("movimientos")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// CAPAS DE COSTO — motor de valorización PMP/FIFO/LIFO (Fase 0-2, 2026-08-08).
+// Independiente de LoteProducto (que es una feature opcional de vencimiento,
+// sin almacenId, no todo producto la usa) — CapaCosto se crea en TODA
+// ENTRADA/DEVOLUCION-cliente cuando Empresa.costeoAutomatico=true, sin
+// importar si el producto además trackea lotes de vencimiento. loteId acá es
+// solo informativo (referencia cruzada), no la fuente del costo.
+// CapaCostoConsumo deja auditoría de qué SALIDA consumió qué ENTRADA a qué
+// costo — el Kardex valorizado real. Ver utils/valorizacion.util.ts (Fase 1).
+// ─────────────────────────────────────────────────────────────────
+model CapaCosto {
+  id                  String     @id @default(cuid())
+  empresaId           String
+  empresa             Empresa    @relation(fields: [empresaId], references: [id])
+  productoId          String
+  producto            Producto   @relation(fields: [productoId], references: [id])
+  loteId              String? // informativo — si el producto además trackea vencimiento
+  lote                LoteProducto? @relation(fields: [loteId], references: [id])
+  movimientoEntradaId String     @unique
+  movimientoEntrada   Movimiento @relation("CapaCostoOrigen", fields: [movimientoEntradaId], references: [id])
+  cantidadOriginal    Decimal    @db.Decimal(12, 2)
+  cantidadDisponible  Decimal    @db.Decimal(12, 2)
+  costoUnitario       Decimal    @db.Decimal(12, 2)
+  fecha               DateTime   @default(now())
+  createdAt           DateTime   @default(now())
+
+  consumos CapaCostoConsumo[]
+
+  @@index([empresaId, productoId, fecha])
+  @@map("capas_costo")
+}
+
+model CapaCostoConsumo {
+  id                 String     @id @default(cuid())
+  capaCostoId        String
+  capaCosto          CapaCosto  @relation(fields: [capaCostoId], references: [id])
+  movimientoSalidaId String
+  movimientoSalida   Movimiento @relation("CapaCostoConsumos", fields: [movimientoSalidaId], references: [id])
+  cantidad           Decimal    @db.Decimal(12, 2)
+  costoUnitario      Decimal    @db.Decimal(12, 2) // snapshot del costo de la capa al momento de consumirla
+  createdAt          DateTime   @default(now())
+
+  @@map("capas_costo_consumos")
 }
 
 // ─────────────────────────────────────────────────────────────────

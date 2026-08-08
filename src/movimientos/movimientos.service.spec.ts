@@ -22,7 +22,13 @@ function crearTxMock(overrides: Partial<Record<string, any>> = {}) {
       update: vi.fn().mockResolvedValue({}),
     },
     movimiento: {
-      create: vi.fn().mockImplementation(({ data }: any) => Promise.resolve(data)),
+      create: vi.fn().mockImplementation(({ data }: any) => Promise.resolve({ id: 'mov-1', ...data })),
+    },
+    empresa: {
+      findUnique: vi.fn().mockResolvedValue({ costeoAutomatico: false }),
+    },
+    capaCosto: {
+      create: vi.fn().mockResolvedValue({}),
     },
     ...overrides,
   };
@@ -317,6 +323,116 @@ describe('MovimientosService', () => {
         where: { id: 'lote-1' },
         data: { cantidadActual: { increment: -10 } },
       });
+    });
+  });
+
+  // ── capas de costo (Fase 2, motor de valorización) ──────────────────────────
+  describe('capas de costo', () => {
+    it('NO crea CapaCosto en ENTRADA cuando costeoAutomatico=false (default de todo tenant hoy)', async () => {
+      const tx = crearTxMock();
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(tx));
+      await service.create('e1', {
+        tipo: 'ENTRADA', productoId: 'prod-1', almacenId: 'alm-1', cantidad: 10, costoUnitario: 25,
+      } as any);
+      expect(tx.capaCosto.create).not.toHaveBeenCalled();
+    });
+
+    it('crea CapaCosto en ENTRADA cuando costeoAutomatico=true y viene costoUnitario', async () => {
+      const tx = crearTxMock({ empresa: { findUnique: vi.fn().mockResolvedValue({ costeoAutomatico: true }) } });
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(tx));
+      await service.create('e1', {
+        tipo: 'ENTRADA', productoId: 'prod-1', almacenId: 'alm-1', cantidad: 10, costoUnitario: 25,
+      } as any);
+      expect(tx.capaCosto.create).toHaveBeenCalledWith({
+        data: {
+          empresaId: 'e1',
+          productoId: 'prod-1',
+          loteId: null,
+          movimientoEntradaId: 'mov-1',
+          cantidadOriginal: 10,
+          cantidadDisponible: 10,
+          costoUnitario: 25,
+        },
+      });
+    });
+
+    it('crea CapaCosto en DEVOLUCION (de cliente) cuando costeoAutomatico=true', async () => {
+      const tx = crearTxMock({ empresa: { findUnique: vi.fn().mockResolvedValue({ costeoAutomatico: true }) } });
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(tx));
+      await service.create('e1', {
+        tipo: 'DEVOLUCION', productoId: 'prod-1', almacenId: 'alm-1', cantidad: 3, costoUnitario: 40,
+      } as any);
+      expect(tx.capaCosto.create).toHaveBeenCalled();
+    });
+
+    it('crea CapaCosto en AJUSTE con dirección incremento cuando costeoAutomatico=true', async () => {
+      const tx = crearTxMock({ empresa: { findUnique: vi.fn().mockResolvedValue({ costeoAutomatico: true }) } });
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(tx));
+      await service.create('e1', {
+        tipo: 'AJUSTE', productoId: 'prod-1', almacenId: 'alm-1', cantidad: 4, direccion: 'incremento', costoUnitario: 15,
+      } as any);
+      expect(tx.capaCosto.create).toHaveBeenCalled();
+    });
+
+    it('NO crea CapaCosto en ENTRADA con costeoAutomatico=true si no viene costoUnitario', async () => {
+      const tx = crearTxMock({ empresa: { findUnique: vi.fn().mockResolvedValue({ costeoAutomatico: true }) } });
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(tx));
+      await service.create('e1', {
+        tipo: 'ENTRADA', productoId: 'prod-1', almacenId: 'alm-1', cantidad: 10,
+      } as any);
+      expect(tx.capaCosto.create).not.toHaveBeenCalled();
+    });
+
+    it('NO crea CapaCosto en SALIDA aunque costeoAutomatico=true (Fase 3, todavía no implementada)', async () => {
+      const tx = crearTxMock({
+        empresa: { findUnique: vi.fn().mockResolvedValue({ costeoAutomatico: true }) },
+        inventario: {
+          findFirst: vi.fn().mockResolvedValue(null),
+          findMany: vi.fn().mockResolvedValue([{ id: 'inv-1', ubicacionId: null, cantidad: 50, cantidadReservada: 0 }]),
+          create: vi.fn(),
+          update: vi.fn().mockResolvedValue({}),
+        },
+      });
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(tx));
+      await service.create('e1', {
+        tipo: 'SALIDA', productoId: 'prod-1', almacenId: 'alm-1', cantidad: 5, costoUnitario: 25,
+      } as any);
+      expect(tx.capaCosto.create).not.toHaveBeenCalled();
+    });
+
+    it('NO crea CapaCosto en AJUSTE decremento aunque costeoAutomatico=true', async () => {
+      const tx = crearTxMock({
+        empresa: { findUnique: vi.fn().mockResolvedValue({ costeoAutomatico: true }) },
+        inventario: {
+          findFirst: vi.fn().mockResolvedValue(null),
+          findMany: vi.fn().mockResolvedValue([{ id: 'inv-1', ubicacionId: null, cantidad: 50, cantidadReservada: 0 }]),
+          create: vi.fn(),
+          update: vi.fn().mockResolvedValue({}),
+        },
+      });
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(tx));
+      await service.create('e1', {
+        tipo: 'AJUSTE', productoId: 'prod-1', almacenId: 'alm-1', cantidad: 6, direccion: 'decremento', costoUnitario: 25,
+      } as any);
+      expect(tx.capaCosto.create).not.toHaveBeenCalled();
+    });
+
+    it('NO crea CapaCosto en TRANSFERENCIA aunque costeoAutomatico=true (deltaTotal=0)', async () => {
+      const tx = crearTxMock({
+        empresa: { findUnique: vi.fn().mockResolvedValue({ costeoAutomatico: true }) },
+        almacen: { findFirst: vi.fn().mockResolvedValue({ id: 'alm', empresaId: 'e1' }) },
+        inventario: {
+          findFirst: vi.fn().mockResolvedValue({ id: 'inv-1', cantidad: 20 }),
+          findMany: vi.fn().mockResolvedValue([{ id: 'inv-1', ubicacionId: null, cantidad: 20, cantidadReservada: 0 }]),
+          create: vi.fn().mockResolvedValue({}),
+          update: vi.fn().mockResolvedValue({}),
+        },
+      });
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(tx));
+      await service.create('e1', {
+        tipo: 'TRANSFERENCIA', productoId: 'prod-1', almacenId: 'alm-1', almacenDestinoId: 'alm-2', cantidad: 5,
+      } as any);
+      expect(tx.capaCosto.create).not.toHaveBeenCalled();
     });
   });
 

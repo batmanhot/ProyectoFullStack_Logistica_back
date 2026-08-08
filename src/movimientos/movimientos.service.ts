@@ -8,6 +8,7 @@ import {
   deltaTotalDesdeMovimiento,
   prepararMovimiento,
 } from './stock-impacto.util';
+import { crearCapaEntrada } from './capas-costo.util';
 
 @Injectable()
 export class MovimientosService {
@@ -118,7 +119,7 @@ export class MovimientosService {
       });
     }
 
-    return tx.movimiento.create({
+    const movimiento = await tx.movimiento.create({
       data: {
         empresaId,
         tipo: dto.tipo,
@@ -132,6 +133,29 @@ export class MovimientosService {
         documento: dto.documento,
       },
     });
+
+    // Capas de costo (Fase 2 del motor de valorización) — solo en entradas
+    // netas de stock (ENTRADA, DEVOLUCION de cliente, AJUSTE-incremento) y
+    // solo si la empresa activó el kill-switch de rollout. Mientras esté
+    // apagado (default), esto no ejecuta nada — cero cambio de comportamiento.
+    if (impacto.deltaTotal > 0) {
+      const empresa = await tx.empresa.findUnique({
+        where: { id: empresaId },
+        select: { costeoAutomatico: true },
+      });
+      if (empresa?.costeoAutomatico) {
+        await crearCapaEntrada(tx, {
+          empresaId,
+          productoId: dto.productoId,
+          loteId: dto.loteId,
+          movimientoId: movimiento.id,
+          cantidad: impacto.deltaTotal,
+          costoUnitario: dto.costoUnitario as unknown as number,
+        });
+      }
+    }
+
+    return movimiento;
   }
 
   findAll(
