@@ -33,7 +33,10 @@ export class PanelAuditoriaController {
     @Query('desde') desde?: string,
     @Query('hasta') hasta?: string,
   ) {
-    return this.auditoriaService.findAll(empresaId, { busqueda, accion, modulo, usuarioId, desde, hasta });
+    // pageSize 500 para calzar con el tope fijo (take: 500) de las otras 3
+    // pestañas de este panel — es un resumen de solo lectura sin paginador
+    // propio, no debe truncar en silencio al default de 25 de /auditoria.
+    return this.auditoriaService.findAll(empresaId, { busqueda, accion, modulo, usuarioId, desde, hasta }, { pageSize: 500 });
   }
 
   @Get('discrepancias')
