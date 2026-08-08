@@ -43,6 +43,7 @@ import { SunatModule } from './sunat/sunat.module';
 import { AuditoriaModule } from './auditoria/auditoria.module';
 import { ConfiguracionModule } from './configuracion/configuracion.module';
 import { PublicModule } from './public/public.module';
+import { HealthModule } from './health/health.module';
 import { ListasPreciosModule } from './listas-precios/listas-precios.module';
 import { DatosModule } from './datos/datos.module';
 import { PanelAuditoriaModule } from './panel-auditoria/panel-auditoria.module';
@@ -126,6 +127,8 @@ import { EmailModule } from './email/email.module';
     DatosModule,
     // Envío real de documentos por correo (Compartir → Correo), 2026-08-06
     EmailModule,
+    // Health Check para Render (deploy a producción, 2026-08-08)
+    HealthModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
