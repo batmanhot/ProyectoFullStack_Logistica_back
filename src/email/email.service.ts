@@ -41,7 +41,7 @@ export class EmailService implements OnModuleDestroy {
     if (this.browser?.connected) return this.browser;
     this.browser = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
     });
     return this.browser;
   }
