@@ -44,14 +44,35 @@ export class AuthService {
         activo: true,
         origen: true,
         modoDesarrollo: true,
+        fechaVencimiento: true,
       },
     });
 
+    this.assertEmpresaAccesible(empresa);
+
+    return { ...empresa, usuariosDemo: await this.listarUsuariosDemo(empresa!) };
+  }
+
+  /**
+   * Compuerta única de "¿esta empresa puede iniciar sesión ahora mismo?" —
+   * se llama desde los 4 puntos de entrada (buscarEmpresaPorCodigo, login,
+   * demoLogin, refresh) para que un trial vencido o un negocio suspendido/
+   * cancelado quede bloqueado sin importar por dónde intente entrar, no solo
+   * en el paso 1 del flujo normal (alguien podría llamar login() directo con
+   * un empresaId ya conocido, o tener un refresh token vivo hasta 7 días).
+   */
+  private assertEmpresaAccesible(
+    empresa: { activo: boolean; estado?: string; fechaVencimiento?: Date | null } | null,
+  ): void {
     if (!empresa || !empresa.activo) {
       throw new UnauthorizedException('Empresa no encontrada o inactiva');
     }
-
-    return { ...empresa, usuariosDemo: await this.listarUsuariosDemo(empresa) };
+    if (empresa.estado === 'suspendido' || empresa.estado === 'cancelado') {
+      throw new UnauthorizedException('Esta cuenta está suspendida. Contacta al administrador.');
+    }
+    if (empresa.fechaVencimiento && empresa.fechaVencimiento < new Date()) {
+      throw new UnauthorizedException('El período de prueba o la suscripción de esta empresa venció.');
+    }
   }
 
   /**
@@ -73,6 +94,12 @@ export class AuthService {
 
   /** Paso 2 del login. */
   async login(empresaId: string, email: string, password: string) {
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: empresaId },
+      select: { activo: true, estado: true, fechaVencimiento: true },
+    });
+    this.assertEmpresaAccesible(empresa);
+
     const usuario = (await this.prisma.withTenant(empresaId, (tx) =>
       tx.usuario.findUnique({
         where: { empresaId_email: { empresaId, email } },
@@ -113,9 +140,10 @@ export class AuthService {
 
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
-      select: { id: true, activo: true, origen: true, modoDesarrollo: true },
+      select: { id: true, activo: true, estado: true, fechaVencimiento: true, origen: true, modoDesarrollo: true },
     });
-    if (!empresa || !empresa.activo || empresa.origen !== 'demo' || !empresa.modoDesarrollo) {
+    this.assertEmpresaAccesible(empresa);
+    if (empresa!.origen !== 'demo' || !empresa!.modoDesarrollo) {
       throw new UnauthorizedException('Acceso rápido no disponible para esta empresa');
     }
 
@@ -180,6 +208,12 @@ export class AuthService {
     } catch {
       throw new UnauthorizedException('Refresh token inválido o expirado');
     }
+
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id: payload.empresaId },
+      select: { activo: true, estado: true, fechaVencimiento: true },
+    });
+    this.assertEmpresaAccesible(empresa);
 
     const usuario = (await this.prisma.withTenant(payload.empresaId, (tx) =>
       tx.usuario.findUnique({

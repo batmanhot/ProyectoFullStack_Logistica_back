@@ -51,6 +51,31 @@ describe('AuthService', () => {
       );
     });
 
+    it('lanza Unauthorized si el negocio está suspendido', async () => {
+      prismaMock.empresa.findUnique.mockResolvedValue({ id: '1', activo: true, estado: 'suspendido' });
+      await expect(service.buscarEmpresaPorCodigo('dlnorte')).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('lanza Unauthorized si el negocio está cancelado', async () => {
+      prismaMock.empresa.findUnique.mockResolvedValue({ id: '1', activo: true, estado: 'cancelado' });
+      await expect(service.buscarEmpresaPorCodigo('dlnorte')).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('lanza Unauthorized si el trial venció (fechaVencimiento en el pasado)', async () => {
+      prismaMock.empresa.findUnique.mockResolvedValue({
+        id: '1', activo: true, estado: 'trial', fechaVencimiento: new Date('2020-01-01'),
+      });
+      await expect(service.buscarEmpresaPorCodigo('dlnorte')).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('permite el acceso si el trial todavía no vence', async () => {
+      const fechaFutura = new Date(Date.now() + 30 * 86_400_000);
+      prismaMock.empresa.findUnique.mockResolvedValue({
+        id: '1', activo: true, estado: 'trial', fechaVencimiento: fechaFutura, origen: 'admin_saas', modoDesarrollo: false,
+      });
+      await expect(service.buscarEmpresaPorCodigo('dlnorte')).resolves.toMatchObject({ id: '1' });
+    });
+
     it('no incluye usuariosDemo si la empresa no es de origen demo, aunque modoDesarrollo esté activo', async () => {
       prismaMock.empresa.findUnique.mockResolvedValue({
         id: '1', activo: true, codigo: 'real', origen: 'admin_saas', modoDesarrollo: true,
@@ -93,6 +118,12 @@ describe('AuthService', () => {
       rol: { codigo: 'admin', label: 'Administrador', permisos: [{ modulo: '*' }] },
     };
 
+    beforeEach(() => {
+      // Empresa activa por default en este describe — los tests de bloqueo
+      // por empresa vencida/suspendida tienen su propio caso más abajo.
+      prismaMock.empresa.findUnique.mockResolvedValue({ activo: true, estado: 'activo', fechaVencimiento: null });
+    });
+
     it('lanza Unauthorized si el usuario no existe (mensaje genérico, sin filtrar la causa)', async () => {
       prismaMock.withTenant.mockResolvedValue(null);
       await expect(service.login('e1', 'no@existe.com', 'x')).rejects.toThrow(
@@ -126,6 +157,16 @@ describe('AuthService', () => {
       expect(resultado.usuario).not.toHaveProperty('passwordHash');
       expect(resultado.usuario.rol.permisos).toEqual(['*']);
       expect(resultado.usuario.areaId).toBe('a1');
+    });
+
+    it('lanza Unauthorized si la empresa venció, sin llegar a validar el password', async () => {
+      prismaMock.empresa.findUnique.mockResolvedValue({
+        activo: true, estado: 'trial', fechaVencimiento: new Date('2020-01-01'),
+      });
+      await expect(service.login('e1', usuarioBase.email, 'correcto123')).rejects.toThrow(
+        UnauthorizedException,
+      );
+      expect(prismaMock.withTenant).not.toHaveBeenCalled();
     });
   });
 
@@ -172,9 +213,21 @@ describe('AuthService', () => {
       expect(resultado.usuario).not.toHaveProperty('passwordHash');
       expect(resultado.usuario.email).toBe('admin@dlnorte.demo');
     });
+
+    it('lanza Unauthorized si el trial de la empresa demo venció', async () => {
+      prismaMock.empresa.findUnique.mockResolvedValue({
+        id: 'e1', activo: true, estado: 'trial', fechaVencimiento: new Date('2020-01-01'),
+        origen: 'demo', modoDesarrollo: true,
+      });
+      await expect(service.demoLogin('e1', 'u1')).rejects.toThrow(UnauthorizedException);
+    });
   });
 
   describe('refresh — rotación de tokens', () => {
+    beforeEach(() => {
+      prismaMock.empresa.findUnique.mockResolvedValue({ activo: true, estado: 'activo', fechaVencimiento: null });
+    });
+
     it('lanza Unauthorized si el refresh token no verifica', async () => {
       jwtMock.verifyAsync.mockRejectedValue(new Error('expirado'));
       await expect(service.refresh('token-invalido')).rejects.toThrow(UnauthorizedException);
@@ -184,6 +237,13 @@ describe('AuthService', () => {
       jwtMock.verifyAsync.mockResolvedValue({ sub: 'u1', empresaId: 'e1' });
       prismaMock.withTenant.mockResolvedValue(null);
       await expect(service.refresh('token-valido')).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('lanza Unauthorized si la empresa fue suspendida después de emitido el refresh token', async () => {
+      jwtMock.verifyAsync.mockResolvedValue({ sub: 'u1', empresaId: 'e1' });
+      prismaMock.empresa.findUnique.mockResolvedValue({ activo: true, estado: 'suspendido', fechaVencimiento: null });
+      await expect(service.refresh('token-valido')).rejects.toThrow(UnauthorizedException);
+      expect(prismaMock.withTenant).not.toHaveBeenCalled();
     });
   });
 });

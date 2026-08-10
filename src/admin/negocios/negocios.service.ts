@@ -1,4 +1,6 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateNegocioDto } from './dto/create-negocio.dto';
@@ -7,6 +9,8 @@ import { assertExists } from '../../common/utils/assert-exists.util';
 
 @Injectable()
 export class NegociosService {
+  private readonly logger = new Logger('NegociosService');
+
   constructor(private readonly prisma: PrismaService) {}
 
   /**
@@ -64,11 +68,18 @@ export class NegociosService {
             email: dto.email,
             telefono: dto.telefono,
             plan: dto.plan ?? 'starter',
+            estado: dto.estado, // undefined → Prisma aplica el default de schema ("activo")
             fechaVencimiento: dto.fechaVencimiento ? new Date(dto.fechaVencimiento) : null,
             notas: dto.notas,
             origen: 'admin_saas',
           },
         });
+
+        // Activa el contexto RLS de este tenant recién creado dentro de la
+        // MISMA transacción — sin esto, el insert de Usuario de abajo viola
+        // la política de Row-Level Security de la tabla `usuarios` (bug real
+        // encontrado al probar la creación de un negocio en vivo).
+        await this.prisma.activarTenantEnTransaccion(tx as PrismaClient, empresa.id);
 
         const usuario = await tx.usuario.create({
           data: {
@@ -95,6 +106,16 @@ export class NegociosService {
     await this.findOne(id);
     if (dto.plan) await this.validarPlan(dto.plan);
 
+    // Si se cambia `estado` sin decir explícitamente `activo`, se deriva uno del
+    // otro — el panel solo expone un selector de "Estado" (ver TabNegocios.jsx),
+    // así que reactivar un negocio (ej. extender un trial vencido a 'trial' de
+    // nuevo) debe reabrir el acceso sin que el operador tenga que tocar un
+    // segundo campo que ni siquiera está en el formulario.
+    const activoImplicito =
+      dto.activo === undefined && dto.estado !== undefined
+        ? ['trial', 'activo'].includes(dto.estado)
+        : undefined;
+
     try {
       return await this.prisma.empresa.update({
         where: { id },
@@ -108,6 +129,7 @@ export class NegociosService {
           ...(dto.plan !== undefined && { plan: dto.plan }),
           ...(dto.estado !== undefined && { estado: dto.estado }),
           ...(dto.activo !== undefined && { activo: dto.activo }),
+          ...(activoImplicito !== undefined && { activo: activoImplicito }),
           ...(dto.fechaVencimiento !== undefined && { fechaVencimiento: new Date(dto.fechaVencimiento) }),
           ...(dto.notas !== undefined && { notas: dto.notas }),
         },
@@ -137,5 +159,33 @@ export class NegociosService {
       () => this.prisma.planSaaS.findUnique({ where: { id: planId } }),
       `El plan "${planId}" no existe en el catálogo de PlanSaaS`,
     );
+  }
+
+  /**
+   * Corta automáticamente el acceso a los negocios en trial cuya
+   * fechaVencimiento ya pasó — sin esto, `fechaVencimiento` era puramente
+   * informativo (solo alimentaba un correo de alerta al PlatformAdmin,
+   * `admin/alertas/alertas.service.ts`) y un trial vencido seguía
+   * funcionando indefinidamente. Alcance deliberadamente limitado a
+   * `estado === 'trial'`: los planes pagos (activo/básico/profesional/...)
+   * no tienen todavía un flujo de facturación real, así que suspenderlos
+   * automáticamente por una fecha que el operador pudo no haber actualizado
+   * cortaría a un cliente pagando — eso sigue siendo una decisión manual del
+   * PlatformAdmin (editar el negocio a 'suspendido'/'cancelado').
+   * `AuthService.assertEmpresaAccesible` es quien realmente bloquea el login;
+   * este cron solo mantiene el campo `estado`/`activo` (y por lo tanto el
+   * panel de AdminSaaS) al día para que no haga falta esperar a un intento
+   * de login para que se refleje.
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  async suspenderTrialsVencidos() {
+    const { count } = await this.prisma.empresa.updateMany({
+      where: { activo: true, estado: 'trial', fechaVencimiento: { lt: new Date() } },
+      data: { activo: false, estado: 'vencido' },
+    });
+    if (count > 0) {
+      this.logger.log(`${count} negocio(s) en trial vencido suspendido(s) automáticamente.`);
+    }
+    return count;
   }
 }

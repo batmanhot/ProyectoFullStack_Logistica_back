@@ -33,6 +33,13 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     await this.$disconnect();
   }
 
+  private tenantContextSql(empresaId: string): string {
+    if (!SAFE_ID_PATTERN.test(empresaId)) {
+      throw new BadRequestException('Identificador de empresa inválido');
+    }
+    return `SET LOCAL app.current_tenant = '${empresaId}'`;
+  }
+
   /**
    * Centraliza el SET LOCAL app.current_tenant que activa las políticas
    * de Row-Level Security (ver prisma/sql/enable_rls_fase1.sql).
@@ -44,12 +51,19 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     fn: (tx: PrismaClient) => Promise<T>,
     opts?: { timeout?: number; maxWait?: number },
   ): Promise<T> {
-    if (!SAFE_ID_PATTERN.test(empresaId)) {
-      throw new BadRequestException('Identificador de empresa inválido');
-    }
     return this.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe(`SET LOCAL app.current_tenant = '${empresaId}'`);
+      await tx.$executeRawUnsafe(this.tenantContextSql(empresaId));
       return fn(tx as PrismaClient);
     }, opts);
+  }
+
+  /**
+   * Igual que withTenant(), pero para cuando el caller ya abrió su propia
+   * transacción (ej. NegociosService.create(), que crea la Empresa y a
+   * continuación su primer Usuario en el mismo $transaction — no puede
+   * anidar otra transacción con withTenant() adentro de esa).
+   */
+  async activarTenantEnTransaccion(tx: PrismaClient, empresaId: string): Promise<void> {
+    await tx.$executeRawUnsafe(this.tenantContextSql(empresaId));
   }
 }

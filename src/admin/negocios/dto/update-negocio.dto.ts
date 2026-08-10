@@ -30,7 +30,7 @@ export class UpdateNegocioDto {
   plan?: string;
 
   @IsOptional()
-  @IsIn(['activo', 'suspendido', 'cancelado'])
+  @IsIn(['trial', 'activo', 'suspendido', 'cancelado'])
   estado?: string;
 
   @IsOptional()

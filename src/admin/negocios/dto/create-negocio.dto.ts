@@ -1,4 +1,4 @@
-import { IsDateString, IsEmail, IsNotEmpty, IsOptional, IsString, Matches, MinLength } from 'class-validator';
+import { IsDateString, IsEmail, IsIn, IsNotEmpty, IsOptional, IsString, Matches, MinLength } from 'class-validator';
 
 export class CreateNegocioDto {
   /** Slug único usado en el login por tenant (paso 1) — siempre minúscula. */
@@ -39,6 +39,11 @@ export class CreateNegocioDto {
   @IsOptional()
   @IsDateString()
   fechaVencimiento?: string;
+
+  /** Si se omite, Empresa.estado cae al default de schema ("activo"). */
+  @IsOptional()
+  @IsIn(['trial', 'activo'])
+  estado?: string;
 
   @IsOptional()
   @IsString()
