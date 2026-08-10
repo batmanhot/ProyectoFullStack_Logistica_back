@@ -84,6 +84,13 @@ export class DatosService {
     await tx.vehiculoFlota.deleteMany({ where: { empresaId } });
 
     // Nivel 3 — maestros operativos
+    // CapaCosto/CapaCostoConsumo (costeo PEPS, gateado por Empresa.costeoAutomatico)
+    // referencian Movimiento/Producto/LoteProducto SIN onDelete: Cascade en el
+    // schema — hay que vaciarlas antes o el borrado de abajo viola la FK (bug
+    // real: dormido hoy porque el flag está apagado por default y aún no tiene
+    // toggle en el frontend, pero rompería en cuanto se active para un tenant).
+    await tx.capaCostoConsumo.deleteMany({ where: { capaCosto: { empresaId } } });
+    await tx.capaCosto.deleteMany({ where: { empresaId } });
     await tx.movimiento.deleteMany({ where: { empresaId } });
     // LoteProducto e Inventario no tienen empresaId propio — se filtran por producto
     await tx.loteProducto.deleteMany({ where: { producto: { empresaId } } });

@@ -67,6 +67,21 @@ describe('DatosService', () => {
       );
     });
 
+    it('borra capaCostoConsumo y capaCosto antes que movimiento y producto (costeo PEPS sin onDelete: Cascade)', async () => {
+      const tx = crearTxMock();
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(tx));
+      await service.limpiarOperativos('e1');
+      expect(tx.capaCostoConsumo.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.capaCosto.deleteMany.mock.invocationCallOrder[0],
+      );
+      expect(tx.capaCosto.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.movimiento.deleteMany.mock.invocationCallOrder[0],
+      );
+      expect(tx.capaCosto.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.producto.deleteMany.mock.invocationCallOrder[0],
+      );
+    });
+
     it('NO toca ubicacion/areaInterna/almacen/categoria (solo limpia lo operativo)', async () => {
       const tx = crearTxMock();
       prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(tx));
