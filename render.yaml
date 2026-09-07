@@ -1,0 +1,123 @@
+# ═══════════════════════════════════════════════════════════════════
+# StockPro API — Render Blueprint  (plan FREE)
+#
+# Uso: dashboard de Render → "New +" → "Blueprint" → apuntar a este repo.
+# Render lee este archivo y crea/actualiza:
+#   - stockpro-db   : PostgreSQL (free)
+#   - stockpro-api  : web service Docker (free)
+#
+# ⚠️ FREE TIER — limitaciones conocidas:
+#   · La base de datos se BORRA automáticamente a los ~30 días. Hay que
+#     rehacer el blueprint y volver a correr migraciones + seed (§ runbook).
+#   · El web service se DUERME tras 15 min sin tráfico (primer request lento).
+#   · NO soporta preDeployCommand → las migraciones se corren a mano
+#     (ver DEPLOY-RENDER.md).
+#   Para algo permanente: subir ambos a plan de pago y descomentar el
+#   preDeployCommand de más abajo.
+#
+# El runbook completo (rol RLS 'stockpro_app', migraciones, seed) está en
+# DEPLOY-RENDER.md — son pasos de una sola vez que no van acá.
+# ═══════════════════════════════════════════════════════════════════
+
+databases:
+  - name: stockpro-db
+    databaseName: stockpro          # nombre de la BD (estable, no aleatorio)
+    user: stockpro                  # rol dueño (migraciones + seed)
+    plan: free
+    region: virginia               # misma región que el web service
+
+services:
+  - type: web
+    name: stockpro-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    region: virginia
+    branch: main
+    healthCheckPath: /api/health
+
+    # preDeployCommand: npm run migrate:deploy
+    #   ↑ descomentar SOLO al pasar a plan de pago. En free no está soportado;
+    #     correr `npm run migrate:deploy` a mano en cada deploy con migraciones
+    #     nuevas (ver DEPLOY-RENDER.md §5).
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # ── Base de datos ──────────────────────────────────────────────
+      # DATABASE_URL      → rol dueño de las tablas (migraciones + seed).
+      #                     Render la inyecta desde la Postgres del blueprint.
+      # APP_DATABASE_URL  → rol restringido 'stockpro_app' (runtime, con RLS).
+      #                     Se arma A MANO: mismo host/BD que arriba, pero
+      #                     user=stockpro_app y la contraseña que elegiste al
+      #                     correr `npm run db:app-role` (DEPLOY-RENDER.md §2).
+      - key: DATABASE_URL
+        fromDatabase:
+          name: stockpro-db
+          property: connectionString
+      - key: APP_DATABASE_URL
+        sync: false
+
+      # ── Secretos JWT (4 identidades distintas) ────────────────────
+      # Render los genera aleatorios y distintos en el primer deploy.
+      # El arranque falla si alguno es placeholder, <20 chars o repetido.
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: ADMIN_JWT_SECRET
+        generateValue: true
+      - key: PORTAL_JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 15m
+      - key: JWT_REFRESH_EXPIRES_IN
+        value: 7d
+      - key: ADMIN_JWT_EXPIRES_IN
+        value: 8h
+      - key: PORTAL_JWT_EXPIRES_IN
+        value: 365d
+
+      # ── App ──────────────────────────────────────────────────────
+      # PORT lo inyecta Render automáticamente — no declararlo.
+      - key: FRONTEND_URL
+        sync: false            # origin del frontend en prod (CORS). Obligatorio con NODE_ENV=production.
+
+      # ── PlatformAdmin (consola SuperAdmin) ───────────────────────
+      # Sin estas, el seed cae al admin demo público. Definirlas ANTES del seed.
+      - key: PLATFORM_ADMIN_EMAIL
+        sync: false
+      - key: PLATFORM_ADMIN_PASSWORD
+        sync: false
+
+      # No sembrar los tenants demo (dlnorte/acme con contraseña pública).
+      - key: SEED_DEMO_TENANTS
+        value: "false"
+
+      # ── Web Push (opcional — alertas). Generar el par una vez:
+      #    node -e "console.log(require('web-push').generateVAPIDKeys())"
+      #    VAPID_PUBLIC_KEY debe coincidir con VITE_VAPID_PUBLIC_KEY del frontend.
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_SUBJECT
+        sync: false
+
+      # ── SMTP (opcional — enviar documentos por correo) ───────────
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_SECURE
+        value: "false"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM_NAME
+        value: StockPro
+      - key: SMTP_FROM_EMAIL
+        sync: false

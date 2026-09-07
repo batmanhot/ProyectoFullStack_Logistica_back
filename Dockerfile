@@ -46,6 +46,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
+# tsconfig — lo necesita ts-node para los comandos de una sola vez que se
+# corren desde el Shell/Job de Render: `npm run db:app-role` y `prisma:seed`
+# (ver DEPLOY-RENDER.md). El servidor en sí corre JS ya compilado (dist/).
+COPY --from=builder /app/tsconfig*.json ./
 COPY package.json ./
 
 EXPOSE 3000

@@ -433,8 +433,15 @@ async function main() {
 
   // 2) Empresas demo + un usuario por rol
   // (Usuario.empresaId NO es nullable, así que el upsert compuesto sí es válido aquí.)
+  //
+  // En un despliegue real (Render, etc.) pasar SEED_DEMO_TENANTS=false para NO
+  // crear 'dlnorte'/'acme' con la contraseña demo pública `StockPro2026!`. Los
+  // roles base, planes, PlatformAdmin y landing (pasos 1, 3, 4, 5) SÍ se
+  // siembran siempre — la plataforma no arranca sin ellos.
+  const sembrarDemo = process.env.SEED_DEMO_TENANTS !== 'false';
+  if (!sembrarDemo) console.log('  · SEED_DEMO_TENANTS=false — se omiten las empresas demo (dlnorte/acme)');
   const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 12);
-  for (const e of EMPRESAS_DEMO) {
+  for (const e of sembrarDemo ? EMPRESAS_DEMO : []) {
     let empresa = await prisma.empresa.upsert({
       where: { codigo: e.codigo },
       update: { modoDesarrollo: true },
