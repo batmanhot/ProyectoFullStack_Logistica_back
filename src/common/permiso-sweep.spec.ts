@@ -11,9 +11,15 @@ import * as ts from 'typescript';
  *
  * Objetivo: que un controller NUEVO sin guard se note en este test, no en
  * producción — ya pasó una vez con facturas-b2b.controller.ts (auditoría de
- * seguridad 2026-07-29). Las excepciones de abajo son lecturas
- * intencionalmente abiertas a cualquier usuario autenticado (documentadas
- * inline en cada controller) — la mutación siempre queda gateada.
+ * seguridad 2026-07-29). Las excepciones de abajo caen en dos grupos, y
+ * TODAS siguen detrás del JwtAuthGuard global (usuario autenticado):
+ *   1. Lecturas intencionalmente abiertas a cualquier usuario autenticado.
+ *   2. Endpoints sin @Permiso() de módulo por diseño explícito, documentado
+ *      inline en su controller: email (solo re-renderiza a PDF / envía un
+ *      HTML que el frontend ya tenía permiso de ver, con @Throttle propio) y
+ *      push (cada usuario gestiona su propia suscripción; el cron de envío sí
+ *      respeta 'alertas').
+ * Al agregar una entrada acá, deja el comentario del porqué en el controller.
  */
 const SRC_DIR = path.join(__dirname, '..');
 
@@ -27,6 +33,9 @@ const ALLOWLIST: Record<string, string[]> = {
   'movimientos/movimientos.controller.ts': ['findAll', 'findOne', 'kardex'],
   'roles/roles.controller.ts': ['verificarPermiso'],
   'auth/auth.controller.ts': ['logout'],
+  // Grupo 2 — sin @Permiso() de módulo a propósito (ver comentario de cada controller).
+  'email/email.controller.ts': ['enviarDocumento', 'generarPdf'],
+  'push/push.controller.ts': ['subscribe', 'unsubscribe'],
 };
 
 const HTTP_DECORATORS = new Set(['Get', 'Post', 'Put', 'Patch', 'Delete']);

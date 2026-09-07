@@ -101,6 +101,25 @@ describe('NegociosService.create', () => {
     ).rejects.toThrow(BadRequestException);
   });
 
+  it('el mensaje del P2002 nombra el campo concreto que chocó (RUC vs slug)', async () => {
+    prismaMock.rol.findFirst.mockResolvedValue({ id: 'rol-admin-global' });
+    // Prisma/Postgres pone en meta.target los nombres de campo del modelo.
+    prismaMock.$transaction.mockRejectedValue({ code: 'P2002', meta: { target: ['ruc'] } });
+
+    const dto = {
+      codigo: 'abc',
+      nombre: 'Empresa ABC SAC',
+      ruc: '20123456789',
+      adminNombre: 'Admin',
+      adminEmail: 'admin@abc.demo',
+      adminPassword: 'password123',
+    } as any;
+
+    // El slug 'abc' está libre; lo que choca es el RUC — el mensaje debe decirlo.
+    await expect(service.create(dto)).rejects.toThrow(/RUC/i);
+    await expect(service.create(dto)).rejects.not.toThrow(/slug/i);
+  });
+
   it('pasa el estado (ej. "trial") a la Empresa creada — para que una empresa de prueba nazca como trial, no como "activo" por default', async () => {
     prismaMock.rol.findFirst.mockResolvedValue({ id: 'rol-admin-global' });
     const txMock = {

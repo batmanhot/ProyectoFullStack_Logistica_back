@@ -6,7 +6,19 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateNegocioDto } from './dto/create-negocio.dto';
 import { UpdateNegocioDto } from './dto/update-negocio.dto';
 import { assertExists } from '../../common/utils/assert-exists.util';
+import { relanzarP2002 } from '../../common/utils/prisma-error.util';
 import { DIAS_GRACIA, calcularEstadoEfectivo } from '../estado-negocio.util';
+
+// Índices únicos que puede violar el alta/edición de un negocio — el mensaje
+// viejo ("código o RUC") obligaba al SuperAdmin a adivinar cuál repetir, y ni
+// mencionaba el email. Se pasa a `relanzarP2002` para nombrar el campo real.
+const CONFLICTOS_NEGOCIO: Record<string, string> = {
+  codigo: 'Ya existe un negocio con ese código URL (slug). Elige otro.',
+  ruc: 'Ya existe un negocio registrado con ese RUC / identificación fiscal.',
+  email: 'Ese email ya está en uso por otro usuario del negocio.',
+};
+const CONFLICTO_NEGOCIO_DEFECTO =
+  'Ya existe un negocio con un dato único duplicado (código URL, RUC o email).';
 
 @Injectable()
 export class NegociosService {
@@ -182,11 +194,8 @@ export class NegociosService {
 
         return { ...empresa, usuarioAdminInicial: usuario, usuarioOwner };
       });
-    } catch (e: any) {
-      if (e.code === 'P2002') {
-        throw new BadRequestException('Ya existe un negocio con ese código o RUC');
-      }
-      throw e;
+    } catch (e) {
+      relanzarP2002(e, CONFLICTOS_NEGOCIO, CONFLICTO_NEGOCIO_DEFECTO);
     }
   }
 
@@ -266,11 +275,8 @@ export class NegociosService {
 
         return empresaActualizada;
       });
-    } catch (e: any) {
-      if (e.code === 'P2002') {
-        throw new BadRequestException('Ya existe un negocio con ese RUC o email duplicado');
-      }
-      throw e;
+    } catch (e) {
+      relanzarP2002(e, CONFLICTOS_NEGOCIO, CONFLICTO_NEGOCIO_DEFECTO);
     }
   }
 
