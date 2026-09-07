@@ -1,4 +1,4 @@
-import { IsBoolean, IsDateString, IsEmail, IsIn, IsOptional, IsString, Matches } from 'class-validator';
+import { IsBoolean, IsDateString, IsEmail, IsIn, IsOptional, IsString, Matches, MinLength } from 'class-validator';
 
 export class UpdateNegocioDto {
   @IsOptional()
@@ -44,4 +44,32 @@ export class UpdateNegocioDto {
   @IsOptional()
   @IsString()
   notas?: string;
+
+  // ── Usuario administrador del negocio ──
+  @IsOptional()
+  @IsString()
+  adminNombre?: string;
+
+  @IsOptional()
+  @IsEmail()
+  adminEmail?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  adminPassword?: string;
+
+  // ── Admin Owner opcional (ver create-negocio.dto.ts) ──
+  @IsOptional()
+  @IsString()
+  ownerNombre?: string;
+
+  @IsOptional()
+  @IsEmail()
+  ownerEmail?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  ownerPassword?: string;
 }

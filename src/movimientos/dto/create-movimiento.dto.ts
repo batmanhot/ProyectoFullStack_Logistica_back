@@ -53,4 +53,19 @@ export class CreateMovimientoDto {
   @IsOptional()
   @IsString()
   documento?: string;
+
+  // Gestión de Pedidos por Proyecto (2026-09-04) — se copia desde el
+  // origen (ej. PedidoInterno.proyectoId en entregar()) al crear la SALIDA,
+  // ver nota en schema.prisma#Movimiento. Opcional, no exigido por ningún
+  // caller existente.
+  @IsOptional()
+  @IsString()
+  proyectoId?: string;
+
+  // Fase 4 (2026-09-04) — FK real al Pedido Interno de origen, ver nota en
+  // schema.prisma#Movimiento. Reemplaza a `documento` (texto libre) como
+  // trazabilidad real para el reporte de consumo por proyecto/área.
+  @IsOptional()
+  @IsString()
+  pedidoInternoId?: string;
 }

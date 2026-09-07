@@ -123,6 +123,44 @@ describe('PedidosInternosService', () => {
       );
       expect(r.numero).toBe('PI-00001');
     });
+
+    it('rechaza si el proyecto indicado no existe en el tenant (Gestión de Pedidos por Proyecto)', async () => {
+      const txArea = { areaInterna: { findFirst: vi.fn().mockResolvedValue({ id: 'area-1' }) } };
+      const txAlm  = { almacen: { findFirst: vi.fn().mockResolvedValue({ id: 'alm-1' }) } };
+      const txProy = { proyecto: { findFirst: vi.fn().mockResolvedValue(null) } };
+      prisma.withTenant
+        .mockImplementationOnce((_e: string, fn: any) => fn(txArea))
+        .mockImplementationOnce((_e: string, fn: any) => fn(txAlm))
+        .mockImplementationOnce((_e: string, fn: any) => fn(txProy));
+      await expect(
+        service.create('e1', 'usr-1', { areaId: 'area-1', almacenId: 'alm-1', proyectoId: 'proy-404', items: [] } as any),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('crea con proyectoId cuando se indica uno válido', async () => {
+      const txArea = { areaInterna: { findFirst: vi.fn().mockResolvedValue({ id: 'area-1' }) } };
+      const txAlm  = { almacen: { findFirst: vi.fn().mockResolvedValue({ id: 'alm-1' }) } };
+      const txProy = { proyecto: { findFirst: vi.fn().mockResolvedValue({ id: 'proy-1' }) } };
+      const txProd = { producto: { findFirst: vi.fn().mockResolvedValue({ id: 'prod-1' }) } };
+      const txMain = {
+        pedidoInterno: {
+          count: vi.fn().mockResolvedValue(0),
+          create: vi.fn().mockResolvedValue({ ...PEDIDO_BASE, proyectoId: 'proy-1' }),
+        },
+      };
+      prisma.withTenant
+        .mockImplementationOnce((_e: string, fn: any) => fn(txArea))
+        .mockImplementationOnce((_e: string, fn: any) => fn(txAlm))
+        .mockImplementationOnce((_e: string, fn: any) => fn(txProy))
+        .mockImplementationOnce((_e: string, fn: any) => fn(txProd))
+        .mockImplementationOnce((_e: string, fn: any) => fn(txMain));
+      await service.create('e1', 'usr-1', {
+        areaId: 'area-1', almacenId: 'alm-1', proyectoId: 'proy-1', items: [{ productoId: 'prod-1', cantidad: 5 }],
+      } as any);
+      expect(txMain.pedidoInterno.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ proyectoId: 'proy-1' }) }),
+      );
+    });
   });
 
   // ── update ─────────────────────────────────────────────────────────────────
@@ -164,14 +202,35 @@ describe('PedidosInternosService', () => {
       await expect(service.aprobar('e1', 'p1', 'usr-admin', {})).rejects.toThrow(ForbiddenException);
     });
 
-    it('aprobar() avanza a APROBADO y guarda usuarioApruebaId', async () => {
+    it('aprobar() avanza a APROBADO y guarda usuarioApruebaId (con stock suficiente)', async () => {
       vi.spyOn(service, 'findOne').mockResolvedValue({ ...PEDIDO_BASE, estado: 'ENVIADO' } as any);
+      const txStock  = {
+        producto:   { findMany: vi.fn().mockResolvedValue([{ id: 'prod-1', nombre: 'Producto 1' }]) },
+        inventario: { findMany: vi.fn().mockResolvedValue([{ ubicacionId: null, cantidad: 100, cantidadReservada: 0 }]) },
+      };
       const txUpdate = { pedidoInterno: { update: vi.fn().mockResolvedValue({ ...PEDIDO_BASE, estado: 'APROBADO' }) } };
-      prisma.withTenant.mockImplementationOnce((_e: string, fn: any) => fn(txUpdate));
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn({ ...txStock, ...txUpdate }));
       const r = await service.aprobar('e1', 'p1', 'usr-admin', { notas: 'OK' });
       expect(txUpdate.pedidoInterno.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ estado: 'APROBADO', usuarioApruebaId: 'usr-admin' }) }),
       );
+    });
+
+    it('aprobar() rechaza (fail-fast) si no hay stock suficiente, sin llegar a aprobar', async () => {
+      vi.spyOn(service, 'findOne').mockResolvedValue({
+        ...PEDIDO_BASE, estado: 'ENVIADO',
+        items: [{ productoId: 'prod-1', cantidad: 5 }],
+      } as any);
+      const txStock = {
+        producto:   { findMany: vi.fn().mockResolvedValue([{ id: 'prod-1', nombre: 'Producto 1' }]) },
+        inventario: { findMany: vi.fn().mockResolvedValue([{ ubicacionId: null, cantidad: 2, cantidadReservada: 0 }]) },
+      };
+      const txUpdate = { pedidoInterno: { update: vi.fn() } };
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn({ ...txStock, ...txUpdate }));
+      await expect(service.aprobar('e1', 'p1', 'usr-admin', {})).rejects.toThrow(
+        'Stock insuficiente en el almacén para:\n- Producto 1: disponible 2, se requieren 5',
+      );
+      expect(txUpdate.pedidoInterno.update).not.toHaveBeenCalled();
     });
 
     it('rechazar() rechaza si no está en ENVIADO', async () => {
@@ -232,6 +291,56 @@ describe('PedidosInternosService', () => {
       const r = await service.entregar('e1', 'p1', 'usr-almacenero');
       expect(movimientosMock.crearEnTransaccion).toHaveBeenCalledTimes(2);
       expect(r.estado).toBe('ENTREGADO');
+    });
+
+    it('toma el costoUnitario de Producto.precioCompra (PedidoInternoItem no tiene costo propio)', async () => {
+      vi.spyOn(service, 'findOne').mockResolvedValue({
+        ...PEDIDO_BASE, estado: 'PICKING',
+        items: [{ productoId: 'prod-1', cantidad: 5 }],
+      } as any);
+      const txMock = {
+        producto: { findMany: vi.fn().mockResolvedValue([{ id: 'prod-1', nombre: 'Producto 1', precioCompra: 12.5 }]) },
+        inventario: { findMany: vi.fn().mockResolvedValue([{ ubicacionId: null, cantidad: 100, cantidadReservada: 0 }]) },
+        pedidoInterno: { update: vi.fn().mockImplementation(({ data }: any) => Promise.resolve({ ...PEDIDO_BASE, ...data })) },
+      };
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(txMock));
+      await service.entregar('e1', 'p1', 'usr-almacenero');
+      expect(movimientosMock.crearEnTransaccion).toHaveBeenCalledWith(
+        txMock, 'e1', expect.objectContaining({ costoUnitario: 12.5 }),
+      );
+    });
+
+    it('propaga proyectoId del pedido a cada Movimiento SALIDA generado (Gestión de Pedidos por Proyecto)', async () => {
+      vi.spyOn(service, 'findOne').mockResolvedValue({
+        ...PEDIDO_BASE, estado: 'PICKING', proyectoId: 'proy-1',
+        items: [{ productoId: 'prod-1', cantidad: 5 }],
+      } as any);
+      const txMock = {
+        producto: { findMany: vi.fn().mockResolvedValue([{ id: 'prod-1', nombre: 'Producto 1' }]) },
+        inventario: { findMany: vi.fn().mockResolvedValue([{ ubicacionId: null, cantidad: 100, cantidadReservada: 0 }]) },
+        pedidoInterno: { update: vi.fn().mockImplementation(({ data }: any) => Promise.resolve({ ...PEDIDO_BASE, ...data })) },
+      };
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(txMock));
+      await service.entregar('e1', 'p1', 'usr-almacenero');
+      expect(movimientosMock.crearEnTransaccion).toHaveBeenCalledWith(
+        txMock, 'e1', expect.objectContaining({ proyectoId: 'proy-1' }),
+      );
+    });
+
+    it('no manda proyectoId (queda undefined) cuando el pedido no tiene proyecto asignado', async () => {
+      vi.spyOn(service, 'findOne').mockResolvedValue({
+        ...PEDIDO_BASE, estado: 'PICKING', proyectoId: null,
+        items: [{ productoId: 'prod-1', cantidad: 5 }],
+      } as any);
+      const txMock = {
+        producto: { findMany: vi.fn().mockResolvedValue([{ id: 'prod-1', nombre: 'Producto 1' }]) },
+        inventario: { findMany: vi.fn().mockResolvedValue([{ ubicacionId: null, cantidad: 100, cantidadReservada: 0 }]) },
+        pedidoInterno: { update: vi.fn().mockImplementation(({ data }: any) => Promise.resolve({ ...PEDIDO_BASE, ...data })) },
+      };
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(txMock));
+      await service.entregar('e1', 'p1', 'usr-almacenero');
+      const llamada = movimientosMock.crearEnTransaccion.mock.calls[0][2];
+      expect(llamada.proyectoId).toBeUndefined();
     });
 
     it('rechaza y lista TODOS los productos con stock insuficiente, sin generar ningún movimiento', async () => {

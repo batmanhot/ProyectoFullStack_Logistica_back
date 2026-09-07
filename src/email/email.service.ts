@@ -143,6 +143,42 @@ export class EmailService implements OnModuleDestroy {
     return { enviado: true };
   }
 
+  /**
+   * Correo simple sin adjunto (2026-09-04) — para notificaciones del sistema
+   * (hoy: alertas de vencimiento de SuperAdmin, ver AlertasService) que no
+   * tienen un documento PDF que renderizar. Reusa el mismo transporter que
+   * enviarDocumento(), sin arrastrar la parte de Puppeteer/PDF.
+   */
+  async enviarCorreoSimple(dto: { destinatarioEmail: string; asunto: string; mensaje: string }) {
+    const transporter = this.getTransporter();
+    const nombreRemitente = process.env.SMTP_FROM_NAME || 'StockPro';
+    const emailRemitente = process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER;
+
+    const html = `<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:'Segoe UI',Arial,sans-serif;color:#222">
+  <div style="max-width:560px;margin:0 auto;padding:32px 28px;background:#fff">
+    <div style="border-bottom:3px solid #00c896;padding-bottom:14px;margin-bottom:22px">
+      <div style="font-size:19px;font-weight:700;color:#0f172a">${nombreRemitente}</div>
+    </div>
+    <p style="font-size:14px;line-height:1.6;margin:0;white-space:pre-line">${dto.mensaje}</p>
+  </div>
+</body></html>`;
+
+    try {
+      await transporter.sendMail({
+        from: `"${nombreRemitente}" <${emailRemitente}>`,
+        to: dto.destinatarioEmail,
+        subject: dto.asunto,
+        text: dto.mensaje,
+        html,
+      });
+    } catch (err: any) {
+      this.logger.error(`Falló el envío de correo simple a ${dto.destinatarioEmail}`, err?.stack ?? String(err));
+      throw new InternalServerErrorException('No se pudo enviar el correo.');
+    }
+  }
+
   /** Evita procesos de Chromium huérfanos al reiniciar Nest (--watch en dev recarga este provider seguido). */
   async onModuleDestroy() {
     if (this.browser) await this.browser.close().catch(() => {});

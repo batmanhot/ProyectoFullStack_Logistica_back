@@ -20,6 +20,7 @@ const SELECT_PUBLICO = {
   rol: { select: { id: true, codigo: true, label: true } },
   area: { select: { id: true, nombre: true, codigo: true } }, // Fase 6
   transportista: { select: { id: true, nombre: true, placa: true } }, // Fase 3 vista móvil
+  metaVentasMensual: true, // Fase 10 Gestión Comercial
 } as const;
 
 @Injectable()
@@ -61,6 +62,7 @@ export class UsuariosService {
             rolId: dto.rolId,
             areaId: dto.areaId,
             transportistaId: dto.transportistaId,
+            metaVentasMensual: dto.metaVentasMensual,
           },
           select: SELECT_PUBLICO,
         }),
@@ -93,6 +95,7 @@ export class UsuariosService {
       ...(dto.activo !== undefined && { activo: dto.activo }),
       ...(dto.areaId !== undefined && { areaId: dto.areaId }),
       ...(dto.transportistaId !== undefined && { transportistaId: dto.transportistaId }),
+      ...(dto.metaVentasMensual !== undefined && { metaVentasMensual: dto.metaVentasMensual }),
     };
 
     // password solo se actualiza si se envía explícitamente (sección 5 — Usuario).

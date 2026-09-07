@@ -1,4 +1,4 @@
-import { IsBoolean, IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsNumber, IsOptional, IsString, Min, MinLength, ValidateIf } from 'class-validator';
 
 /** Reglas de negocio — Usuario (sección 5): password NO obligatorio en update. */
 export class UpdateUsuarioDto {
@@ -32,4 +32,16 @@ export class UpdateUsuarioDto {
   @IsOptional()
   @IsString()
   transportistaId?: string;
+
+  /**
+   * Fase 10 Gestión Comercial (2026-09-03) — solo relevante para
+   * 'ejecutivo-comercial'. Acepta `null` explícito para poder quitar una
+   * meta ya configurada (el cliente aclaró que no todo vendedor debe tener
+   * una — algunos venden solo por teléfono/WhatsApp/correo sin cuota fija).
+   */
+  @IsOptional()
+  @ValidateIf((o) => o.metaVentasMensual !== null)
+  @IsNumber()
+  @Min(0)
+  metaVentasMensual?: number | null;
 }

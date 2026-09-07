@@ -38,6 +38,14 @@ const ROLES_BASE: { codigo: string; label: string; permisos: string[] }[] = [
       // Auditoría de seguridad 2026-07-29 (Hallazgo Alto #7): gestión de
       // catálogos/estructura — antes sin gating, ahora requieren estos permisos.
       'almacenes', 'categorias', 'areas-internas',
+      // Fase 10 (Gestión Comercial, 2026-08-31): visibilidad del pipeline
+      // comercial para el mando operativo, no solo para el ejecutivo de ventas.
+      'oportunidades',
+      // Gestión de Pedidos por Proyecto (2026-09-04): puede VER el reporte de
+      // consumo por proyecto/CDR, pero no gestionar el catálogo de Proyecto/
+      // CDR — eso queda exclusivo de Admin/Owner (permiso 'proyectos', que
+      // este rol no tiene).
+      'reportes-proyecto',
     ],
   },
   {
@@ -52,6 +60,13 @@ const ROLES_BASE: { codigo: string; label: string; permisos: string[] }[] = [
       // Auditoría de seguridad 2026-07-29 (Hallazgo Alto #7): "Supervisor de
       // Almacén" es, por definición, quien gestiona almacenes y categorías.
       'almacenes', 'categorias',
+      // 2026-09-04: ni Supervisor ni Almacenero (abajo) tenían este permiso —
+      // ninguno de los dos roles que trabajan en el almacén físico podía ver
+      // Pedidos Internos, pese a que son quienes preparan y entregan esas
+      // solicitudes. Aprobar/Rechazar queda restringido a Supervisor+ vía
+      // @SoloRoles en el controller — Almacenero/Despachador solo ejecutan
+      // (Picking/Entregar), no autorizan el gasto.
+      'pedidos-internos',
     ],
   },
   {
@@ -75,7 +90,23 @@ const ROLES_BASE: { codigo: string; label: string; permisos: string[] }[] = [
       // la página de Alertas de escritorio también estaba rota para este rol,
       // no solo el hub móvil nuevo.
       'ordenes', 'lotes-series',
+      // 2026-09-04 — ver nota en 'supervisor' arriba. Puede preparar/entregar
+      // (Picking/Entregar) pero no Aprobar/Rechazar (@SoloRoles lo restringe).
+      'pedidos-internos',
     ], // sin 'ajustes' ni 'almacenes' — autoridad exclusiva del Supervisor de Almacén
+  },
+  {
+    // 2026-09-04: puesto real en algunas operaciones (no todas) — alguien
+    // dedicado exclusivamente a preparar y entregar, sin gestionar inventario
+    // (no recibe, no ajusta, no cuenta, no transfiere). A diferencia de
+    // 'almacenero', que es dueño de todo el piso de almacén, este rol es
+    // deliberadamente angosto: solo la ejecución del despacho/entrega, tanto
+    // a clientes (Despachos) como a áreas internas (Pedidos Internos). No
+    // puede Aprobar/Rechazar Pedidos Internos (@SoloRoles lo reserva a
+    // Supervisor+), ni tiene 'inventario'/'entradas'/'ajustes'/etc.
+    codigo: 'despachador',
+    label: 'Despachador',
+    permisos: ['dashboard', 'alertas', 'despachos', 'picking', 'pedidos-internos', 'transportes'],
   },
   {
     codigo: 'analista-compras',
@@ -85,7 +116,17 @@ const ROLES_BASE: { codigo: string; label: string; permisos: string[] }[] = [
   {
     codigo: 'ejecutivo-comercial',
     label: 'Ejecutivo Comercial',
-    permisos: ['dashboard', 'alertas', 'clientes', 'proformas', 'cxc', 'portal-pedidos', 'lista-precios', 'reportes'],
+    // 'inventario' agregado 2026-09-04: sin esto, Proformas no puede listar
+    // productos para cotizar (el guard de permisos es todo-o-nada por
+    // módulo, no hay lectura parcial) — decisión del dueño del producto:
+    // acceso completo a Productos es aceptable para este rol.
+    // Auditoría 2026-09-03: se quitó 'reportes' (abre Análisis de Inventario
+    // Y Reportes Contables bajo el mismo módulo — ninguna de las dos es del
+    // dominio comercial, y ambas quedaban rotas por faltarle 'movimientos'/
+    // 'almacenes'/'ordenes'/'despachos'/'proveedores'). Se agregó 'almacenes'
+    // (mínimo necesario para que Portal de Pedidos pueda aprobar un pedido
+    // eligiendo almacén de despacho, ver PortalPedidos.jsx).
+    permisos: ['dashboard', 'alertas', 'clientes', 'proformas', 'cxc', 'portal-pedidos', 'lista-precios', 'oportunidades', 'inventario', 'almacenes'],
   },
   {
     codigo: 'coordinador-transporte',
@@ -109,7 +150,14 @@ const ROLES_BASE: { codigo: string; label: string; permisos: string[] }[] = [
     label: 'Contable / Finanzas',
     permisos: ['dashboard', 'alertas', 'sunat', 'financiero', 'cxc', 'reportes', 'kpis'],
   },
-  { codigo: 'solicitante', label: 'Solicitante', permisos: ['pedidos-internos'] },
+  {
+    codigo: 'solicitante',
+    label: 'Solicitante',
+    // 'dashboard' agregado 2026-09-04: todo rol debe tener su propio panel
+    // de gestión (ver DashboardSolicitante) — sin este permiso el ítem
+    // "Dashboard" ni siquiera aparecía en su menú lateral.
+    permisos: ['dashboard', 'pedidos-internos'],
+  },
   {
     codigo: 'auditor',
     label: 'Auditor',
@@ -137,8 +185,14 @@ const EMPRESAS_DEMO = [
       { email: 'gerente@dlnorte.demo',     nombre: 'Gerente Operaciones DL Norte', rolCodigo: 'gerente-operaciones' },
       { email: 'supervisor@dlnorte.demo',  nombre: 'Supervisor DL Norte',  rolCodigo: 'supervisor' },
       { email: 'almacenero@dlnorte.demo',  nombre: 'Almacenero DL Norte',  rolCodigo: 'almacenero' },
+      { email: 'despachador@dlnorte.demo', nombre: 'Despachador DL Norte', rolCodigo: 'despachador' },
       { email: 'compras@dlnorte.demo',     nombre: 'Analista Compras DL Norte', rolCodigo: 'analista-compras' },
       { email: 'comercial@dlnorte.demo',   nombre: 'Ejecutivo Comercial DL Norte', rolCodigo: 'ejecutivo-comercial' },
+      // Segundo vendedor demo (2026-09-03): con nombre real, no la etiqueta
+      // de rol — para poder probar de verdad "varios vendedores por empresa"
+      // (filtro por responsable, reasignación de oportunidades, ranking
+      // comparativo en Oportunidades > Rendimiento por vendedor).
+      { email: 'comercial2@dlnorte.demo',  nombre: 'Carla Mendoza',        rolCodigo: 'ejecutivo-comercial' },
       { email: 'transporte@dlnorte.demo',  nombre: 'Coordinador Transporte DL Norte', rolCodigo: 'coordinador-transporte' },
       // Sin transportistaId acá — prisma:seed no crea Transportistas (eso lo hace
       // DatosService.sembrarDlNorte, disparado por "Restaurar Datos Demo"), que
@@ -161,6 +215,7 @@ const EMPRESAS_DEMO = [
       { email: 'gerente@acme.demo',     nombre: 'Gerente Operaciones Acme', rolCodigo: 'gerente-operaciones' },
       { email: 'supervisor@acme.demo',  nombre: 'Supervisor Acme',  rolCodigo: 'supervisor' },
       { email: 'almacenero@acme.demo',  nombre: 'Almacenero Acme',  rolCodigo: 'almacenero' },
+      { email: 'despachador@acme.demo', nombre: 'Despachador Acme', rolCodigo: 'despachador' },
       { email: 'compras@acme.demo',     nombre: 'Analista Compras Acme', rolCodigo: 'analista-compras' },
       { email: 'comercial@acme.demo',   nombre: 'Ejecutivo Comercial Acme', rolCodigo: 'ejecutivo-comercial' },
       { email: 'transporte@acme.demo',  nombre: 'Coordinador Transporte Acme', rolCodigo: 'coordinador-transporte' },

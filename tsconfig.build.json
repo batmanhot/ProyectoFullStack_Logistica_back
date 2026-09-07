@@ -3,5 +3,5 @@
   "compilerOptions": {
     "rootDir": "./src"
   },
-  "exclude": ["node_modules", "test", "dist", "prisma", "vitest.config.ts", "vitest.integration.config.ts", "**/*spec.ts"]
+  "exclude": ["node_modules", "test", "dist", "prisma", "scripts", "vitest.config.ts", "vitest.integration.config.ts", "**/*spec.ts"]
 }

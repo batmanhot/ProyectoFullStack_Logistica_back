@@ -82,6 +82,33 @@ describe('DatosService', () => {
       );
     });
 
+    it('borra actividadComercial y oportunidad antes que cliente (FK requerida Oportunidad->Cliente)', async () => {
+      const tx = crearTxMock();
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(tx));
+      await service.limpiarOperativos('e1');
+      expect(tx.actividadComercial.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.oportunidad.deleteMany.mock.invocationCallOrder[0],
+      );
+      expect(tx.oportunidad.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.cliente.deleteMany.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('borra movimiento y pedidoInterno antes que proyecto, y proyecto antes que cDR (FKs de Consumo por Proyecto)', async () => {
+      const tx = crearTxMock();
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(tx));
+      await service.limpiarOperativos('e1');
+      expect(tx.movimiento.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.proyecto.deleteMany.mock.invocationCallOrder[0],
+      );
+      expect(tx.pedidoInterno.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.proyecto.deleteMany.mock.invocationCallOrder[0],
+      );
+      expect(tx.proyecto.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.cDR.deleteMany.mock.invocationCallOrder[0],
+      );
+    });
+
     it('NO toca ubicacion/areaInterna/almacen/categoria (solo limpia lo operativo)', async () => {
       const tx = crearTxMock();
       prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(tx));

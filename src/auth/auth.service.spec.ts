@@ -76,6 +76,27 @@ describe('AuthService', () => {
       await expect(service.buscarEmpresaPorCodigo('dlnorte')).resolves.toMatchObject({ id: '1' });
     });
 
+    it('permite el acceso dentro del período de gracia (venció hace 2 días, gracia = 5)', async () => {
+      const hace2dias = new Date(Date.now() - 2 * 86_400_000);
+      prismaMock.empresa.findUnique.mockResolvedValue({
+        id: '1', activo: true, estado: 'activo', fechaVencimiento: hace2dias, origen: 'admin_saas', modoDesarrollo: false,
+      });
+      await expect(service.buscarEmpresaPorCodigo('dlnorte')).resolves.toMatchObject({ id: '1' });
+    });
+
+    it('bloquea una vez agotado el período de gracia (venció hace 6 días, gracia = 5)', async () => {
+      const hace6dias = new Date(Date.now() - 6 * 86_400_000);
+      prismaMock.empresa.findUnique.mockResolvedValue({
+        id: '1', activo: true, estado: 'activo', fechaVencimiento: hace6dias,
+      });
+      await expect(service.buscarEmpresaPorCodigo('dlnorte')).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('lanza Unauthorized si el negocio está archivado (eliminación definitiva)', async () => {
+      prismaMock.empresa.findUnique.mockResolvedValue({ id: '1', activo: true, estado: 'archivado' });
+      await expect(service.buscarEmpresaPorCodigo('dlnorte')).rejects.toThrow(UnauthorizedException);
+    });
+
     it('no incluye usuariosDemo si la empresa no es de origen demo, aunque modoDesarrollo esté activo', async () => {
       prismaMock.empresa.findUnique.mockResolvedValue({
         id: '1', activo: true, codigo: 'real', origen: 'admin_saas', modoDesarrollo: true,

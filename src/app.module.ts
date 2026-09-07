@@ -36,6 +36,9 @@ import { PlanesModule } from './admin/planes/planes.module';
 import { RenovacionesModule } from './admin/renovaciones/renovaciones.module';
 import { AlertasModule } from './admin/alertas/alertas.module';
 import { LandingModule } from './admin/landing/landing.module';
+import { AuditoriaPlataformaModule } from './admin/auditoria/auditoria-plataforma.module';
+import { PlatformAdminsModule } from './admin/platform-admins/platform-admins.module';
+import { RolesBaseModule } from './admin/roles-base/roles-base.module';
 import { PortalModule } from './portal/portal.module';
 import { PortalProveedorModule } from './portal-proveedor/portal-proveedor.module';
 import { FacturasB2BModule } from './facturas-b2b/facturas-b2b.module';
@@ -50,6 +53,9 @@ import { PanelAuditoriaModule } from './panel-auditoria/panel-auditoria.module';
 import { IncidenciasModule } from './incidencias/incidencias.module';
 import { PushModule } from './push/push.module';
 import { EmailModule } from './email/email.module';
+import { OportunidadesModule } from './oportunidades/oportunidades.module';
+import { CdrModule } from './cdr/cdr.module';
+import { ProyectosModule } from './proyectos/proyectos.module';
 
 @Module({
   imports: [
@@ -105,6 +111,9 @@ import { EmailModule } from './email/email.module';
     RenovacionesModule,
     AlertasModule,
     LandingModule,
+    AuditoriaPlataformaModule,
+    PlatformAdminsModule,
+    RolesBaseModule,
     // Fase 7e — Portal de Clientes (auth separada — ver PortalClienteGuard) + Facturas B2B
     PortalModule,
     PortalProveedorModule,
@@ -129,6 +138,13 @@ import { EmailModule } from './email/email.module';
     EmailModule,
     // Health Check para Render (deploy a producción, 2026-08-08)
     HealthModule,
+    // Fase 10 — Gestión Comercial (Oportunidades y Seguimiento de Ventas),
+    // integrada al módulo de Ventas existente (Proforma.oportunidadId)
+    OportunidadesModule,
+    // Gestión de Pedidos por Proyecto (2026-09-04) — caso de uso logística
+    // minera: consumo valorizado por proyecto/CDR, ver docs/BITACORA.md.
+    CdrModule,
+    ProyectosModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

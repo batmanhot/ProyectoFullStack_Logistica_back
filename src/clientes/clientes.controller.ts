@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
 import { TenantId } from '../common/decorators/tenant.decorator';
 import { Permiso } from '../common/decorators/permiso.decorator';
+import { SoloRoles } from '../common/decorators/solo-roles.decorator';
 import { ClientesService } from './clientes.service';
 import { CreateClienteDto } from './dto/create-cliente.dto';
 import { UpdateClienteDto } from './dto/update-cliente.dto';
@@ -38,6 +39,7 @@ export class ClientesController {
     return this.clientesService.update(empresaId, id, dto);
   }
 
+  @SoloRoles('gerente-operaciones')
   @Delete(':id')
   remove(@TenantId() empresaId: string, @Param('id') id: string) {
     return this.clientesService.remove(empresaId, id);

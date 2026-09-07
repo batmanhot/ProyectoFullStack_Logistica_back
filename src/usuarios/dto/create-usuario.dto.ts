@@ -1,4 +1,4 @@
-import { IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsNumber, IsOptional, IsString, Min, MinLength } from 'class-validator';
 
 /** Reglas de negocio — Usuario (sección 5): password obligatorio en alta. */
 export class CreateUsuarioDto {
@@ -26,4 +26,10 @@ export class CreateUsuarioDto {
   @IsOptional()
   @IsString()
   transportistaId?: string;
+
+  /** Fase 10 Gestión Comercial (2026-09-03) — solo relevante para 'ejecutivo-comercial'. */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  metaVentasMensual?: number;
 }

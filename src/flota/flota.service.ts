@@ -129,10 +129,12 @@ export class FlotaService {
         where: {
           vehiculo: { empresaId },
           ...(filtros.vehiculoId && { vehiculoId: filtros.vehiculoId }),
+          // "hasta" (YYYY-MM-DD) sin forzar hora cae en medianoche UTC y
+          // excluye en silencio lo generado ESE MISMO día después.
           ...((filtros.desde || filtros.hasta) && {
             fecha: {
               ...(filtros.desde && { gte: new Date(filtros.desde) }),
-              ...(filtros.hasta && { lte: new Date(filtros.hasta) }),
+              ...(filtros.hasta && { lte: new Date(`${filtros.hasta}T23:59:59.999Z`) }),
             },
           }),
         },
@@ -228,10 +230,12 @@ export class FlotaService {
         where: {
           vehiculo: { empresaId },
           ...(filtros.vehiculoId && { vehiculoId: filtros.vehiculoId }),
+          // "hasta" (YYYY-MM-DD) sin forzar hora cae en medianoche UTC y
+          // excluye en silencio lo generado ESE MISMO día después.
           ...((filtros.desde || filtros.hasta) && {
             fecha: {
               ...(filtros.desde && { gte: new Date(filtros.desde) }),
-              ...(filtros.hasta && { lte: new Date(filtros.hasta) }),
+              ...(filtros.hasta && { lte: new Date(`${filtros.hasta}T23:59:59.999Z`) }),
             },
           }),
         },

@@ -1,11 +1,13 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, UseGuards, UseInterceptors } from '@nestjs/common';
 import { Public } from '../../common/decorators/public.decorator';
 import { PlatformAdminGuard } from '../../common/guards/platform-admin.guard';
+import { PlatformAuditInterceptor } from '../../common/interceptors/platform-audit.interceptor';
 import { RenovacionesService } from './renovaciones.service';
 import { CreateRenovacionDto } from './dto/create-renovacion.dto';
 
 @Public()
 @UseGuards(PlatformAdminGuard)
+@UseInterceptors(PlatformAuditInterceptor)
 @Controller('admin/renovaciones')
 export class RenovacionesController {
   constructor(private readonly renovacionesService: RenovacionesService) {}

@@ -22,6 +22,8 @@ const ALLOWLIST: Record<string, string[]> = {
   'categorias/categorias.controller.ts': ['findAll', 'findOne'],
   'areas-internas/areas-internas.controller.ts': ['findAll', 'findOne'],
   'almacenes/almacenes.controller.ts': ['findAll', 'findOne'],
+  'cdr/cdr.controller.ts': ['findAll', 'findOne'],
+  'proyectos/proyectos.controller.ts': ['findAll', 'findOne'],
   'movimientos/movimientos.controller.ts': ['findAll', 'findOne', 'kardex'],
   'roles/roles.controller.ts': ['verificarPermiso'],
   'auth/auth.controller.ts': ['logout'],

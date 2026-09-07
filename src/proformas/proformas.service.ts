@@ -96,6 +96,7 @@ export class ProformasService {
             notas: dto.notas,
             formaPago: dto.formaPago,
             listaPrecioId: dto.listaPrecioId,
+            oportunidadId: dto.oportunidadId, // Fase 10 — Gestión Comercial (opcional)
             items: {
               create: dto.items.map((i) => ({
                 productoId: i.productoId,

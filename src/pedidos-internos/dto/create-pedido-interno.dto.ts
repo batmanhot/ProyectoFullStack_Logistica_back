@@ -51,6 +51,13 @@ export class CreatePedidoInternoDto {
   @IsString()
   notasSolicitud?: string;
 
+  // Gestión de Pedidos por Proyecto (2026-09-04) — opcional a propósito: no
+  // todo pedido es "de proyecto" (oficinas, insumos generales). Sin esto,
+  // el reporte lo agrupa como "Sin proyecto asignado".
+  @IsOptional()
+  @IsString()
+  proyectoId?: string;
+
   @IsArray()
   @ArrayMinSize(1, { message: 'El pedido debe tener al menos un ítem' })
   @ValidateNested({ each: true })

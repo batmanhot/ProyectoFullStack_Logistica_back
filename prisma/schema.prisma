@@ -31,26 +31,32 @@ datasource db {
 // Fase 7f agrega direccion (punto de partida en la GRE).
 // ─────────────────────────────────────────────────────────────────
 model Empresa {
-  id               String    @id @default(cuid())
-  codigo           String    @unique // slug usado en login: 'dlnorte', 'acme', etc. Siempre lowercase.
-  nombre           String
-  nombreCorto      String? // nombre corto para mostrar en el sidebar cuando el nombre completo es muy largo; editable solo desde AdminSaaS
-  ruc              String    @unique
-  contacto         String?
-  email            String?
-  telefono         String?
-  direccion        String? // Fase 7f — punto de partida en la Guía de Remisión Electrónica
-  plan             String    @default("starter") // referencia LIBRE a PlanSaaS.id (no FK estricta — ver Fase 7d)
-  estado           String    @default("activo") // activo | suspendido | cancelado
-  activo           Boolean   @default(true)
-  origen           String    @default("admin_saas") // 'demo' | 'admin_saas' — trazabilidad de cómo se creó
-  modoDesarrollo   Boolean   @default(false) // switch en Configuración → Sistema: activa accesos rápidos demo en el Login (solo tiene efecto si origen='demo')
-  formulaValorizacion String @default("PMP") // PMP | FIFO | LIFO — método de valorización de inventario (Configuración → Valorización); ver CapaCosto
-  costeoAutomatico Boolean   @default(false) // kill-switch de rollout: mientras sea false, ENTRADA/SALIDA usan costoUnitario manual como siempre (sin CapaCosto)
-  fechaVencimiento DateTime? // vencimiento de la suscripción (Fase 7d)
-  notas            String? // notas internas del PlatformAdmin (Fase 7d)
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  id                  String    @id @default(cuid())
+  codigo              String    @unique // slug usado en login: 'dlnorte', 'acme', etc. Siempre lowercase.
+  nombre              String
+  nombreCorto         String? // nombre corto para mostrar en el sidebar cuando el nombre completo es muy largo; editable solo desde AdminSaaS
+  ruc                 String    @unique
+  contacto            String?
+  email               String?
+  telefono            String?
+  direccion           String? // Fase 7f — punto de partida en la Guía de Remisión Electrónica
+  plan                String    @default("starter") // referencia LIBRE a PlanSaaS.id (no FK estricta — ver Fase 7d)
+  // Solo estados MANUALES/persistidos: trial | activo | suspendido | cancelado | archivado,
+  // más 'vencido' cuando el cron lo asienta al agotarse el período de gracia.
+  // "por_vencer" y "gracia" NUNCA se guardan acá — se calculan en vivo
+  // (ver admin/estado-negocio.util.ts::calcularEstadoEfectivo) a partir de
+  // fechaVencimiento, para que el panel de SuperAdmin nunca muestre un
+  // estado desactualizado respecto al gate real de acceso (AuthService).
+  estado              String    @default("activo")
+  activo              Boolean   @default(true)
+  origen              String    @default("admin_saas") // 'demo' | 'admin_saas' — trazabilidad de cómo se creó
+  modoDesarrollo      Boolean   @default(false) // switch en Configuración → Sistema: activa accesos rápidos demo en el Login (solo tiene efecto si origen='demo')
+  formulaValorizacion String    @default("PMP") // PMP | FIFO | LIFO — método de valorización de inventario (Configuración → Valorización); ver CapaCosto
+  costeoAutomatico    Boolean   @default(false) // kill-switch de rollout: mientras sea false, ENTRADA/SALIDA usan costoUnitario manual como siempre (sin CapaCosto)
+  fechaVencimiento    DateTime? // vencimiento de la suscripción (Fase 7d)
+  notas               String? // notas internas del PlatformAdmin (Fase 7d)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   usuarios                  Usuario[]
   roles                     Rol[]
@@ -79,6 +85,11 @@ model Empresa {
   guiasRemisionElectronicas GuiaRemisionElectronica[]
   listasPrecios             ListaPrecios[]
   registrosIncidencia       RegistroIncidencia[]
+  oportunidades             Oportunidad[]
+  cdrs                      CDR[]
+  proyectos                 Proyecto[]
+  alertasEnvio              AlertaEnvio[]
+  auditoriasPlataforma      AuditoriaPlataforma[]
 
   @@map("empresas")
 }
@@ -89,32 +100,39 @@ model Empresa {
 // que ya existe en el frontend (tienePermiso() consulta roles por tenant).
 // ─────────────────────────────────────────────────────────────────
 model Usuario {
-  id           String       @id @default(cuid())
-  empresaId    String
-  empresa      Empresa      @relation(fields: [empresaId], references: [id])
-  nombre       String
-  email        String
-  passwordHash String // bcrypt — NUNCA texto plano (hallazgo de seguridad ya detectado en BACKEND_PENDIENTES.md)
-  rolId        String
-  rol          Rol          @relation(fields: [rolId], references: [id])
+  id                String         @id @default(cuid())
+  empresaId         String
+  empresa           Empresa        @relation(fields: [empresaId], references: [id])
+  nombre            String
+  email             String
+  passwordHash      String // bcrypt — NUNCA texto plano (hallazgo de seguridad ya detectado en BACKEND_PENDIENTES.md)
+  rolId             String
+  rol               Rol            @relation(fields: [rolId], references: [id])
   // Auditoría de seguridad 2026-07-29 (Hallazgo Alto #6): permite revocar
   // TODOS los refresh tokens emitidos antes de este valor (logout real,
   // sin tabla de tokens). Se incrementa en logout() — cualquier refresh
   // token con un tokenVersion menor al actual deja de servir de inmediato.
-  tokenVersion Int          @default(0)
+  tokenVersion      Int            @default(0)
   // Fase 6 — el rol 'solicitante' queda atado a un área específica
   // (sesion.areaId en PedidosInternos.jsx real). Nullable porque solo
   // aplica a usuarios con ese rol; el resto no necesita área.
-  areaId       String?
-  area         AreaInterna? @relation(fields: [areaId], references: [id])
+  areaId            String?
+  area              AreaInterna?   @relation(fields: [areaId], references: [id])
   // Fase 3 vista móvil (2026-08-05) — mismo patrón que areaId/solicitante:
   // el rol 'chofer' queda atado a un Transportista específico, para filtrar
   // "mis despachos asignados" en el hub móvil. Nullable, solo aplica a ese rol.
-  transportistaId String?
-  transportista    Transportista? @relation(fields: [transportistaId], references: [id])
-  activo       Boolean      @default(true)
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  transportistaId   String?
+  transportista     Transportista? @relation(fields: [transportistaId], references: [id])
+  // Fase 10 Gestión Comercial (2026-09-03) — mismo patrón que areaId/
+  // transportistaId: solo aplica a usuarios con rol 'ejecutivo-comercial'
+  // (o cualquiera que gestione Oportunidades). Nullable a propósito: el
+  // cliente indicó que no todo vendedor tiene una meta formal (venden por
+  // teléfono/WhatsApp/correo sin cuota fija) — sin meta configurada, los
+  // reportes simplemente no comparan contra un objetivo.
+  metaVentasMensual Decimal?       @db.Decimal(12, 2)
+  activo            Boolean        @default(true)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
 
   pedidosSolicitados           PedidoInterno[]         @relation("PedidoSolicitante")
   pedidosAprobados             PedidoInterno[]         @relation("PedidoAprobador")
@@ -123,6 +141,10 @@ model Usuario {
   mantenimientosRegistrados    MantenimientoVehiculo[]
   listasPickingAsignadas       ListaPicking[]
   pushSubscriptions            PushSubscription[]
+  // Fase 10 — Gestión Comercial
+  clientesResponsable          Cliente[]               @relation("ClienteResponsableComercial")
+  oportunidadesResponsable     Oportunidad[]           @relation("OportunidadResponsable")
+  actividadesComerciales       ActividadComercial[]    @relation("ActividadComercialUsuario")
 
   @@unique([empresaId, email]) // email único POR tenant, no global
   @@index([empresaId])
@@ -266,7 +288,7 @@ model Ubicacion {
   estado          String  @default("Disponible")
   observaciones   String?
 
-  inventario   Inventario[]
+  inventario    Inventario[]
   lineasPicking LineaPicking[]
 
   @@unique([almacenId, codigo])
@@ -274,25 +296,25 @@ model Ubicacion {
 }
 
 model Proveedor {
-  id          String   @id @default(cuid())
-  empresaId   String
-  empresa     Empresa  @relation(fields: [empresaId], references: [id])
-  razonSocial String
-  ruc         String?
-  telefono    String?
-  email       String?
-  direccion   String?
-  activo      Boolean  @default(true)
-  createdAt   DateTime @default(now())
+  id                 String   @id @default(cuid())
+  empresaId          String
+  empresa            Empresa  @relation(fields: [empresaId], references: [id])
+  razonSocial        String
+  ruc                String?
+  telefono           String?
+  email              String?
+  direccion          String?
+  activo             Boolean  @default(true)
+  createdAt          DateTime @default(now())
   // Auditoría de seguridad 2026-07-29 (Hallazgo Alto #10): revoca el link del
   // Portal de Proveedores vigente. Se incrementa cada vez que se regenera el
   // link (PortalProveedorService.generarLink).
-  portalTokenVersion Int @default(0)
+  portalTokenVersion Int      @default(0)
   // Módulo de Importación (2026-08-04): proveedor extranjero — informativo,
   // no condiciona nada por sí solo (lo que activa el flujo de importación es
   // OrdenCompra.esImportacion).
-  paisOrigen        String?
-  monedaNegociacion String  @default("PEN")
+  paisOrigen         String?
+  monedaNegociacion  String   @default("PEN")
 
   productos     Producto[]
   ordenesCompra OrdenCompra[]
@@ -423,6 +445,22 @@ model Movimiento {
   costoUnitario    Decimal?       @db.Decimal(12, 2)
   motivo           String?
   documento        String?
+  // Gestión de Pedidos por Proyecto (2026-09-04) — se copia desde
+  // PedidoInterno.proyectoId al generar la SALIDA en entregar() (ver
+  // PedidosInternosService), no se resuelve por join en el reporte: así el
+  // registro de consumo real queda fijo aunque el pedido de origen cambie
+  // después. Opcional — el resto de los tipos de Movimiento (entradas,
+  // ajustes, transferencias) casi nunca lo necesitan, pero queda disponible
+  // por si a futuro se etiqueta una salida directa sin pasar por un pedido.
+  proyectoId       String?
+  proyecto         Proyecto?      @relation(fields: [proyectoId], references: [id])
+  // FK real al Pedido Interno de origen (Fase 4, 2026-09-04) — antes la
+  // única "trazabilidad" era el texto libre `documento` (= PedidoInterno.numero,
+  // sin garantía de unicidad ni de integridad referencial). Necesario para el
+  // reporte de consumo por proyecto: es el único camino para llegar al área
+  // solicitante (AreaInterna), que vive en PedidoInterno, no en Movimiento.
+  pedidoInternoId  String?
+  pedidoInterno    PedidoInterno? @relation(fields: [pedidoInternoId], references: [id])
   fecha            DateTime       @default(now())
   createdAt        DateTime       @default(now())
 
@@ -445,20 +483,20 @@ model Movimiento {
 // costo — el Kardex valorizado real. Ver utils/valorizacion.util.ts (Fase 1).
 // ─────────────────────────────────────────────────────────────────
 model CapaCosto {
-  id                  String     @id @default(cuid())
+  id                  String        @id @default(cuid())
   empresaId           String
-  empresa             Empresa    @relation(fields: [empresaId], references: [id])
+  empresa             Empresa       @relation(fields: [empresaId], references: [id])
   productoId          String
-  producto            Producto   @relation(fields: [productoId], references: [id])
+  producto            Producto      @relation(fields: [productoId], references: [id])
   loteId              String? // informativo — si el producto además trackea vencimiento
   lote                LoteProducto? @relation(fields: [loteId], references: [id])
-  movimientoEntradaId String     @unique
-  movimientoEntrada   Movimiento @relation("CapaCostoOrigen", fields: [movimientoEntradaId], references: [id])
-  cantidadOriginal    Decimal    @db.Decimal(12, 2)
-  cantidadDisponible  Decimal    @db.Decimal(12, 2)
-  costoUnitario       Decimal    @db.Decimal(12, 2)
-  fecha               DateTime   @default(now())
-  createdAt           DateTime   @default(now())
+  movimientoEntradaId String        @unique
+  movimientoEntrada   Movimiento    @relation("CapaCostoOrigen", fields: [movimientoEntradaId], references: [id])
+  cantidadOriginal    Decimal       @db.Decimal(12, 2)
+  cantidadDisponible  Decimal       @db.Decimal(12, 2)
+  costoUnitario       Decimal       @db.Decimal(12, 2)
+  fecha               DateTime      @default(now())
+  createdAt           DateTime      @default(now())
 
   consumos CapaCostoConsumo[]
 
@@ -488,31 +526,39 @@ model CapaCostoConsumo {
 // ─────────────────────────────────────────────────────────────────
 
 model Cliente {
-  id          String   @id @default(cuid())
-  empresaId   String
-  empresa     Empresa  @relation(fields: [empresaId], references: [id])
-  razonSocial String
-  ruc         String?
-  contacto    String?
-  telefono    String?
-  email       String?
-  direccion   String?
-  condicionPago  String?
-  limiteCredito  Decimal? @db.Decimal(12, 2)
-  notas          String?
-  activo      Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  listaPrecioId String?
-  listaPrecio   ListaPrecios? @relation(fields: [listaPrecioId], references: [id])
+  id                     String        @id @default(cuid())
+  empresaId              String
+  empresa                Empresa       @relation(fields: [empresaId], references: [id])
+  razonSocial            String
+  ruc                    String?
+  contacto               String?
+  telefono               String?
+  email                  String?
+  direccion              String?
+  condicionPago          String?
+  limiteCredito          Decimal?      @db.Decimal(12, 2)
+  notas                  String?
+  activo                 Boolean       @default(true)
+  createdAt              DateTime      @default(now())
+  listaPrecioId          String?
+  listaPrecio            ListaPrecios? @relation(fields: [listaPrecioId], references: [id])
   // Auditoría de seguridad 2026-07-29 (Hallazgo Alto #10): revoca el link del
   // Portal de Clientes vigente. Se incrementa cada vez que se regenera el link
   // (PortalService.generarLink) — cualquier token firmado antes deja de servir.
-  portalTokenVersion Int @default(0)
+  portalTokenVersion     Int           @default(0)
+  // Fase 10 — Gestión Comercial. Ambos opcionales: no rompen ningún Cliente
+  // existente. "Prospecto" del documento funcional = un Cliente con estos
+  // campos completados pero aún sin RUC confirmado; no se crea tabla aparte.
+  fuente                 String?
+  responsableComercialId String?
+  responsableComercial   Usuario?      @relation("ClienteResponsableComercial", fields: [responsableComercialId], references: [id])
 
   proformas        Proforma[]
   cuentasPorCobrar CuentaPorCobrar[]
   despachos        Despacho[]
   pedidosPortal    PedidoPortal[]
+  oportunidades    Oportunidad[]
+  proyectos        Proyecto[]
 
   @@index([empresaId])
   @@index([razonSocial(ops: raw("gin_trgm_ops"))], type: Gin)
@@ -732,6 +778,11 @@ model Proforma {
   despacho         Despacho?      @relation(fields: [despachoId], references: [id])
   listaPrecioId    String? // lista de precios usada para sugerir los precios, solo trazabilidad
   listaPrecio      ListaPrecios?  @relation(fields: [listaPrecioId], references: [id])
+  // Fase 10 — Gestión Comercial. Nullable: una proforma puede existir sin
+  // oportunidad asociada (regla explícita del documento funcional), y toda
+  // proforma ya existente queda automáticamente en null al migrar.
+  oportunidadId    String?
+  oportunidad      Oportunidad?   @relation(fields: [oportunidadId], references: [id])
 
   items ProformaItem[]
 
@@ -1087,6 +1138,11 @@ model PedidoInterno {
   area                  AreaInterna         @relation(fields: [areaId], references: [id])
   almacenId             String
   almacen               Almacen             @relation(fields: [almacenId], references: [id])
+  // Gestión de Pedidos por Proyecto (2026-09-04) — opcional, ver nota arriba
+  // de model CDR/Proyecto. Independiente de areaId: un mismo proyecto puede
+  // recibir pedidos de más de un área a lo largo de su ejecución.
+  proyectoId            String?
+  proyecto              Proyecto?           @relation(fields: [proyectoId], references: [id])
   estado                EstadoPedidoInterno @default(BORRADOR)
   prioridad             PrioridadPedido     @default(NORMAL)
   fecha                 DateTime            @default(now())
@@ -1112,7 +1168,8 @@ model PedidoInterno {
   fechaReciboConfirmado DateTime?
   createdAt             DateTime            @default(now())
 
-  items PedidoInternoItem[]
+  items       PedidoInternoItem[]
+  movimientos Movimiento[]
 
   @@unique([empresaId, numero])
   @@index([empresaId])
@@ -1130,6 +1187,73 @@ model PedidoInternoItem {
   notas        String?
 
   @@map("pedido_interno_items")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// GESTIÓN DE PEDIDOS POR PROYECTO (2026-09-04) — caso de uso real: empresas
+// logísticas que operan dentro de una unidad minera, suministrando a
+// múltiples proyectos (obras civiles, avances de mina, EPPs, etc.) de la
+// minera que las contrata. El consumo valorizado por proyecto es la base
+// con la que después le cobran a esa minera — de ahí que Proyecto pueda
+// vincularse a un Cliente (la minera) además de a un CDR.
+//
+// Ambos campos son OPCIONALES en PedidoInterno/Movimiento a propósito: no
+// todo pedido es "de proyecto" (oficinas, insumos generales) — sin
+// seleccionar nada, cae en el bucket "Sin proyecto asignado" del reporte,
+// nunca rompe ni bloquea el flujo ya existente.
+// ─────────────────────────────────────────────────────────────────
+
+// Centro de Responsabilidad — unidad de negocio/gerencia responsable de uno
+// o más Proyectos (ej. "Gerencia de Obras Civiles" es CDR de varios
+// proyectos a la vez). Catálogo independiente de Proyecto, no un campo
+// suelto, para poder reportar "por CDR" de forma consistente.
+model CDR {
+  id          String   @id @default(cuid())
+  empresaId   String
+  empresa     Empresa  @relation(fields: [empresaId], references: [id])
+  codigo      String
+  nombre      String
+  responsable String?
+  activo      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  proyectos Proyecto[]
+
+  @@unique([empresaId, codigo])
+  @@index([empresaId])
+  @@map("cdrs")
+}
+
+enum EstadoProyecto {
+  EN_EJECUCION
+  CERRADO
+}
+
+model Proyecto {
+  id          String         @id @default(cuid())
+  empresaId   String
+  empresa     Empresa        @relation(fields: [empresaId], references: [id])
+  codigo      String
+  nombre      String
+  // La minera (u otro cliente) que contrata el soporte logístico para este
+  // proyecto — opcional: no todo tenant que use este módulo factura por
+  // cliente externo, algunos solo necesitan el control interno de consumo.
+  clienteId   String?
+  cliente     Cliente?       @relation(fields: [clienteId], references: [id])
+  cdrId       String?
+  cdr         CDR?           @relation(fields: [cdrId], references: [id])
+  estado      EstadoProyecto @default(EN_EJECUCION)
+  fechaInicio DateTime?
+  fechaFin    DateTime?
+  activo      Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+
+  pedidosInternos PedidoInterno[]
+  movimientos     Movimiento[]
+
+  @@unique([empresaId, codigo])
+  @@index([empresaId])
+  @@map("proyectos")
 }
 
 enum EstadoInventarioFisico {
@@ -1331,7 +1455,37 @@ model PlatformAdmin {
   activo       Boolean  @default(true)
   createdAt    DateTime @default(now())
 
+  auditorias AuditoriaPlataforma[]
+
   @@map("platform_admins")
+}
+
+// Auditoría de acciones del PlatformAdmin (2026-09-04) — equivalente, a nivel
+// de plataforma, de `Auditoria` (que solo cubre acciones DENTRO de un tenant).
+// Antes, crear/editar/"eliminar" un negocio o resetear la contraseña de su
+// admin no dejaba ningún rastro de quién lo hizo. Se llena automáticamente
+// desde PlatformAuditInterceptor — no requiere que cada service la invoque
+// a mano. `empresaId` es una FK real (a diferencia de RenovacionPlan.empresaId
+// no lo es) porque acá si puede ir null (acciones que no apuntan a un negocio
+// puntual, ej. crear un Plan).
+model AuditoriaPlataforma {
+  id         String        @id @default(cuid())
+  adminId    String
+  admin      PlatformAdmin @relation(fields: [adminId], references: [id])
+  adminEmail String
+  accion     String // nombre del método del controller: create | update | remove | archivar | anular | ...
+  recurso    String // negocios | planes | renovaciones | alertas | landing
+  recursoId  String?
+  empresaId  String?
+  empresa    Empresa?      @relation(fields: [empresaId], references: [id])
+  detalle    String
+  datos      Json? // body de la request, sin campos sensibles (ver PlatformAuditInterceptor.sanitizar)
+  timestamp  DateTime      @default(now())
+
+  @@index([adminId])
+  @@index([recurso, recursoId])
+  @@index([empresaId])
+  @@map("auditoria_plataforma")
 }
 
 // Los "límites por plan" del frontend (TabLimites) se plegaron aquí como
@@ -1409,12 +1563,38 @@ model ReglaAlertaVencimiento {
   id        String   @id @default(cuid())
   diasAntes Int
   activa    Boolean  @default(true)
-  canales   String[] // email | sistema | whatsapp | sms
+  canales   String[] // email | sistema | whatsapp | sms — solo 'email' tiene envío real hoy (ver AlertasService)
   asunto    String
   mensaje   String
   createdAt DateTime @default(now())
 
+  envios AlertaEnvio[]
+
   @@map("reglas_alerta_vencimiento")
+}
+
+// Registro de cada intento de envío real de una alerta de vencimiento
+// (2026-09-04) — antes "Alertas de Vencimiento" solo mostraba una tabla en
+// pantalla que el PlatformAdmin tenía que mirar a mano; ahora un cron manda
+// el correo y deja acá el resultado. `fechaVencimiento` es un snapshot del
+// vencimiento vigente al momento del envío (no el actual de la Empresa): así,
+// si el negocio renueva, cambia su fechaVencimiento y la MISMA regla puede
+// volver a dispararse para el nuevo ciclo sin chocar con el unique de abajo.
+model AlertaEnvio {
+  id               String                 @id @default(cuid())
+  empresaId        String
+  empresa          Empresa                @relation(fields: [empresaId], references: [id])
+  reglaId          String
+  regla            ReglaAlertaVencimiento @relation(fields: [reglaId], references: [id])
+  fechaVencimiento DateTime
+  canal            String
+  estado           String // enviado | fallido
+  error            String?
+  enviadoAt        DateTime               @default(now())
+
+  @@unique([empresaId, reglaId, fechaVencimiento, canal])
+  @@index([empresaId])
+  @@map("alertas_envio")
 }
 
 // Config del sitio público de marketing — SIEMPRE una sola fila (singleton).
@@ -1637,6 +1817,124 @@ model AlertaNotificada {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// FASE 10 — Gestión Comercial (Oportunidades y Seguimiento de Ventas)
+// Capa transversal integrada al Módulo de Ventas existente (Proforma), NO un
+// CRM independiente — así lo pide explícitamente la especificación funcional
+// del cliente. Decisiones de diseño confirmadas con el usuario:
+//
+//   - "Etapa" y "Estado" del documento original se fusionan en un solo
+//     campo `estado` (EstadoOportunidad) — mismo criterio que EstadoDespacho
+//     o EstadoProforma en el resto del schema; tenían el mismo significado.
+//   - NO existe una tabla "Tarea" separada. La "próxima acción" vive en el
+//     último ActividadComercial de la oportunidad (proximaAccion +
+//     fechaProximaAccion) y se denormaliza también en Oportunidad para
+//     listar el pipeline sin tener que agregar sobre la tabla de
+//     actividades en cada carga.
+//   - NO existe una tabla "Prospecto" separada. Un prospecto es un Cliente
+//     sin RUC confirmado aún — se reutiliza Cliente al pie de la letra,
+//     cumpliendo la regla explícita del documento de "no duplicar
+//     información maestra de clientes". Ver los 2 campos nuevos agregados
+//     a Cliente más abajo (fuente, responsableComercialId).
+//   - Proforma.oportunidadId es NULLABLE y no exige nada retroactivo: toda
+//     proforma existente simplemente queda en null. Una proforma puede
+//     existir sin oportunidad (regla explícita del documento: "una
+//     cotización no debe obligatoriamente representar una nueva
+//     oportunidad").
+//   - El cálculo de "seguimientos vencidos" (0–3 días = activa, 4–7 =
+//     requiere atención, +7 = vencida) es derivado en el service a partir
+//     de fechaUltimaActividad — no se persiste un estado de alerta aparte,
+//     para que cambiar el umbral no requiera migrar datos.
+
+enum EstadoOportunidad {
+  NUEVA
+  CALIFICADA
+  COTIZADA
+  EN_NEGOCIACION
+  GANADA
+  PERDIDA
+  CANCELADA
+}
+
+enum TipoActividadComercial {
+  LLAMADA
+  WHATSAPP
+  EMAIL
+  REUNION
+  VISITA
+  VIDEOLLAMADA
+  COTIZACION_ENVIADA
+  COTIZACION_MODIFICADA
+  NEGOCIACION
+  OTRO
+}
+
+model Oportunidad {
+  id                   String            @id @default(cuid())
+  empresaId            String
+  empresa              Empresa           @relation(fields: [empresaId], references: [id])
+  codigo               String // OP-00001, autogenerado igual que Proforma.numero
+  clienteId            String
+  cliente              Cliente           @relation(fields: [clienteId], references: [id])
+  contacto             String? // nombre de contacto puntual para esta oportunidad, si difiere del contacto general del cliente
+  descripcion          String
+  necesidad            String?
+  responsableId        String
+  responsable          Usuario           @relation("OportunidadResponsable", fields: [responsableId], references: [id])
+  estado               EstadoOportunidad @default(NUEVA)
+  valorEstimado        Decimal           @db.Decimal(12, 2)
+  // % de probabilidad de cierre — sugerido automáticamente según el estado
+  // (10/30/60/80/100/0), pero editable a mano por oportunidad. Usado para
+  // el pipeline ponderado (Fase 3 de este mismo módulo, no en este MVP).
+  probabilidad         Int               @default(10)
+  fuente               String?
+  fechaEstimadaCierre  DateTime?
+  fechaCierre          DateTime? // se completa al pasar a GANADA / PERDIDA / CANCELADA
+  motivoPerdida        String? // obligatorio en el service cuando estado pasa a PERDIDA
+  observaciones        String?
+  // Denormalizados a propósito (mismo patrón que Producto.stockActual) —
+  // se actualizan al crear una ActividadComercial, para listar el pipeline
+  // y la bandeja de trabajo sin agregar sobre actividades_comerciales en
+  // cada carga.
+  fechaUltimaActividad DateTime?
+  proximaAccion        String?
+  fechaProximaAccion   DateTime?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  proformas   Proforma[]
+  actividades ActividadComercial[]
+
+  @@unique([empresaId, codigo])
+  @@index([empresaId])
+  @@index([empresaId, estado])
+  @@index([empresaId, responsableId])
+  @@map("oportunidades")
+}
+
+// Historial de interacciones comerciales de una oportunidad — el "qué
+// ocurrió y qué sigue" que hoy vive disperso en Excel. Cada registro nuevo
+// actualiza los campos denormalizados de su Oportunidad (ver service).
+model ActividadComercial {
+  id                 String                 @id @default(cuid())
+  oportunidadId      String
+  oportunidad        Oportunidad            @relation(fields: [oportunidadId], references: [id], onDelete: Cascade)
+  usuarioId          String
+  usuario            Usuario                @relation("ActividadComercialUsuario", fields: [usuarioId], references: [id])
+  tipo               TipoActividadComercial
+  fecha              DateTime               @default(now())
+  resultado          String
+  comentarios        String?
+  // "Tarea" implícita: si estos dos campos vienen informados, es la
+  // próxima acción pendiente de la oportunidad (se refleja en
+  // Oportunidad.proximaAccion / fechaProximaAccion al crear este registro).
+  proximaAccion      String?
+  fechaProximaAccion DateTime?
+  createdAt          DateTime               @default(now())
+
+  @@index([oportunidadId])
+  @@map("actividades_comerciales")
+}
+
 // NOTA TÉCNICA — Row-Level Security (defensa en profundidad multi-tenant)
 // Prisma no expresa políticas RLS en el schema; se agregan con SQL crudo
 // dentro de una migración (npx prisma migrate dev --create-only), ej.:

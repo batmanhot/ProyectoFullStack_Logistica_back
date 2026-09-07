@@ -76,6 +76,29 @@ describe('RenovacionesService', () => {
       const r = await service.create(dto as any);
       expect(r.id).toBe('r2');
     });
+
+    it('reactiva la empresa (activo:true, estado:activo) al registrar el pago — limpia un "vencido" dejado por el cron', async () => {
+      prisma.empresa.findUnique.mockResolvedValue({ id: 'e1', estado: 'vencido' });
+      prisma.planSaaS.findUnique.mockResolvedValue({ id: 'pro' });
+      prisma.renovacionPlan.create.mockResolvedValue({ id: 'r2' });
+      await service.create(dto as any);
+      expect(prisma.empresa.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ plan: 'pro', activo: true, estado: 'activo' }),
+        }),
+      );
+    });
+
+    it('NO reactiva una empresa cancelada/archivada — eso sigue siendo una decisión aparte del PlatformAdmin', async () => {
+      prisma.empresa.findUnique.mockResolvedValue({ id: 'e1', estado: 'cancelado' });
+      prisma.planSaaS.findUnique.mockResolvedValue({ id: 'pro' });
+      prisma.renovacionPlan.create.mockResolvedValue({ id: 'r2' });
+      await service.create(dto as any);
+      const dataEnviada = prisma.empresa.update.mock.calls[0][0].data;
+      expect(dataEnviada.activo).toBeUndefined();
+      expect(dataEnviada.estado).toBeUndefined();
+      expect(dataEnviada.plan).toBe('pro');
+    });
   });
 
   describe('anular', () => {

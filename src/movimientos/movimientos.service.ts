@@ -131,6 +131,8 @@ export class MovimientosService {
         costoUnitario: dto.costoUnitario,
         motivo: dto.motivo,
         documento: dto.documento,
+        proyectoId: dto.proyectoId,
+        pedidoInternoId: dto.pedidoInternoId,
       },
     });
 
@@ -177,10 +179,14 @@ export class MovimientosService {
             OR: [{ almacenId: filtros.almacenId }, { almacenDestinoId: filtros.almacenId }],
           }),
           ...(filtros.tipo && { tipo: filtros.tipo }),
+          // `hasta` llega como "YYYY-MM-DD" (input type=date) — sin forzar
+          // hora, `new Date(...)` cae en medianoche UTC y excluye en silencio
+          // todo lo generado ESE MISMO día después (todo el día en horarios
+          // UTC-negativos como Perú). Mismo criterio que incidencias/auditoría.
           ...((filtros.desde || filtros.hasta) && {
             fecha: {
               ...(filtros.desde && { gte: new Date(filtros.desde) }),
-              ...(filtros.hasta && { lte: new Date(filtros.hasta) }),
+              ...(filtros.hasta && { lte: new Date(`${filtros.hasta}T23:59:59.999Z`) }),
             },
           }),
         },

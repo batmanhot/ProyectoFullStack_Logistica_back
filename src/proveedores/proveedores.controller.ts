@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
 import { TenantId } from '../common/decorators/tenant.decorator';
 import { Permiso } from '../common/decorators/permiso.decorator';
+import { SoloRoles } from '../common/decorators/solo-roles.decorator';
 import { ProveedoresService } from './proveedores.service';
 import { CreateProveedorDto } from './dto/create-proveedor.dto';
 import { UpdateProveedorDto } from './dto/update-proveedor.dto';
@@ -42,6 +43,7 @@ export class ProveedoresController {
     return this.proveedoresService.update(empresaId, id, dto);
   }
 
+  @SoloRoles('gerente-operaciones')
   @Delete(':id')
   remove(@TenantId() empresaId: string, @Param('id') id: string) {
     return this.proveedoresService.remove(empresaId, id);

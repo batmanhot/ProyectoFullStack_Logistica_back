@@ -1,12 +1,14 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Query, UseGuards, UseInterceptors } from '@nestjs/common';
 import { Public } from '../../common/decorators/public.decorator';
 import { PlatformAdminGuard } from '../../common/guards/platform-admin.guard';
+import { PlatformAuditInterceptor } from '../../common/interceptors/platform-audit.interceptor';
 import { PlanesService } from './planes.service';
 import { CreatePlanDto } from './dto/create-plan.dto';
 import { UpdatePlanDto } from './dto/update-plan.dto';
 
 @Public()
 @UseGuards(PlatformAdminGuard)
+@UseInterceptors(PlatformAuditInterceptor)
 @Controller('admin/planes')
 export class PlanesController {
   constructor(private readonly planesService: PlanesService) {}

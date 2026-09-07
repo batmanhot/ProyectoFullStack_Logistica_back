@@ -96,6 +96,17 @@ export class DatosService {
     await tx.loteProducto.deleteMany({ where: { producto: { empresaId } } });
     await tx.inventario.deleteMany({ where: { producto: { empresaId } } });
     await tx.transportista.deleteMany({ where: { empresaId } });
+    // Oportunidades comerciales — ActividadComercial cascadea desde Oportunidad
+    // (onDelete: Cascade), pero se borra explícito primero por consistencia con
+    // el resto del nivel. Debe ir antes de cliente: Oportunidad.clienteId es
+    // requerido (onDelete: Restrict por default) y fallaría con oportunidades vivas.
+    await tx.actividadComercial.deleteMany({ where: { oportunidad: { empresaId } } });
+    await tx.oportunidad.deleteMany({ where: { empresaId } });
+    // Gestión de Pedidos por Proyecto — Proyecto/CDR son datos operativos
+    // (referencian Cliente; los referencian Movimiento y PedidoInterno, ya
+    // borrados arriba con SET NULL). Proyecto antes que CDR (Proyecto.cdrId).
+    await tx.proyecto.deleteMany({ where: { empresaId } });
+    await tx.cDR.deleteMany({ where: { empresaId } });
     await tx.cliente.deleteMany({ where: { empresaId } });
     await tx.producto.deleteMany({ where: { empresaId } });
     await tx.proveedor.deleteMany({ where: { empresaId } });
@@ -297,6 +308,80 @@ export class DatosService {
           },
         },
       });
+
+      // ── Oportunidades (3) — pipeline mínimo de Seguimiento Comercial ────────
+      // Una por cada punto del embudo que deja algo visible: NUEVA, COTIZADA y
+      // una GANADA de este mes (alimenta KPIs y "Rendimiento por vendedor").
+      const usrComercialBasico = await tx.usuario.findFirst({
+        where: { empresaId, rol: { permisos: { some: { modulo: { in: ['oportunidades', '*'] } } } } },
+        orderBy: { createdAt: 'asc' },
+      });
+      if (usrComercialBasico) {
+        const opGanadaB = await tx.oportunidad.create({
+          data: {
+            empresaId, codigo: 'OP-00001', clienteId: cliLima.id, responsableId: usrComercialBasico.id,
+            estado: 'GANADA', probabilidad: 100, valorEstimado: 18000,
+            descripcion: 'Distribución quincenal de mercadería a las tiendas del cliente',
+            fuente: 'Referido', fechaEstimadaCierre: ahora, fechaCierre: ahora, fechaUltimaActividad: ahora,
+          },
+        });
+        await tx.actividadComercial.create({
+          data: { oportunidadId: opGanadaB.id, usuarioId: usrComercialBasico.id, tipo: 'NEGOCIACION', resultado: 'El cliente aceptó la propuesta y se adjudicó el servicio.' },
+        });
+        const opCotizB = await tx.oportunidad.create({
+          data: {
+            empresaId, codigo: 'OP-00002', clienteId: cliAndina.id, responsableId: usrComercialBasico.id,
+            estado: 'COTIZADA', probabilidad: 60, valorEstimado: 7500,
+            descripcion: 'Traslado recurrente de insumos entre almacenes, servicio mensual',
+            fuente: 'Página web', fechaUltimaActividad: ahora, proximaAccion: 'Llamada de seguimiento',
+          },
+        });
+        await tx.actividadComercial.create({
+          data: { oportunidadId: opCotizB.id, usuarioId: usrComercialBasico.id, tipo: 'COTIZACION_ENVIADA', resultado: 'Se envió la cotización; pendiente de respuesta del cliente.', proximaAccion: 'Llamada de seguimiento' },
+        });
+        await tx.oportunidad.create({
+          data: {
+            empresaId, codigo: 'OP-00003', clienteId: cliLima.id, responsableId: usrComercialBasico.id,
+            estado: 'NUEVA', probabilidad: 10, valorEstimado: 4200,
+            descripcion: 'Consulta por transporte puntual de equipos; fecha aún por definir',
+            fuente: 'Llamada en frío',
+          },
+        });
+      }
+
+      // ── Consumo por Proyecto (mínimo) — 1 CDR, 1 proyecto, 1 entrega + 1 pendiente ──
+      const areaBasico = await tx.areaInterna.findFirst({ where: { empresaId }, orderBy: { createdAt: 'asc' } });
+      const usrBasico = usrComercialBasico ?? (await tx.usuario.findFirst({ where: { empresaId }, orderBy: { createdAt: 'asc' } }));
+      if (areaBasico && usrBasico) {
+        const cdrBasico = await tx.cDR.create({ data: { empresaId, codigo: 'CDR-01', nombre: 'Operaciones de Campo' } });
+        const pryBasico = await tx.proyecto.create({
+          data: { empresaId, codigo: 'PRY-01', nombre: 'Servicio Logístico Integral', cdrId: cdrBasico.id, clienteId: cliLima.id, estado: 'EN_EJECUCION', fechaInicio: ahora },
+        });
+        const piEntregado = await tx.pedidoInterno.create({
+          data: {
+            empresaId, numero: 'PI-00001', areaId: areaBasico.id, almacenId: almCentral.id, proyectoId: pryBasico.id,
+            estado: 'ENTREGADO', prioridad: 'NORMAL', usuarioSolicitaId: usrBasico.id, usuarioApruebaId: usrBasico.id, usuarioEntregaId: usrBasico.id,
+            fechaAprobacion: ahora, fechaEntrega: ahora, reciboConfirmado: true, fechaReciboConfirmado: ahora,
+            items: { create: [{ productoId: resma.id, cantidad: 20 }] },
+          },
+        });
+        const invResmaB = await tx.inventario.findFirst({ where: { productoId: resma.id, almacenId: almCentral.id, ubicacionId: null } });
+        if (invResmaB) await tx.inventario.update({ where: { id: invResmaB.id }, data: { cantidad: { decrement: 20 } } });
+        await tx.movimiento.create({
+          data: {
+            empresaId, productoId: resma.id, almacenId: almCentral.id, tipo: 'SALIDA', cantidad: 20, costoUnitario: 13,
+            motivo: 'Entrega de pedido interno de proyecto', documento: piEntregado.numero,
+            proyectoId: pryBasico.id, pedidoInternoId: piEntregado.id, fecha: ahora,
+          },
+        });
+        await tx.pedidoInterno.create({
+          data: {
+            empresaId, numero: 'PI-00002', areaId: areaBasico.id, almacenId: almCentral.id, proyectoId: pryBasico.id,
+            estado: 'APROBADO', prioridad: 'NORMAL', usuarioSolicitaId: usrBasico.id, usuarioApruebaId: usrBasico.id, fechaAprobacion: ahora,
+            items: { create: [{ productoId: lapicero.id, cantidad: 10 }] },
+          },
+        });
+      }
     }
   }
 
@@ -941,6 +1026,488 @@ export class DatosService {
       await tx.pedidoInterno.create({
         data: { empresaId, numero: 'PI-00007', areaId: areaAdm.id, almacenId: almCentral.id, estado: 'RECHAZADO', prioridad: 'NORMAL', usuarioSolicitaId: usrSolicitante.id, usuarioApruebaId: usrAdmin.id, motivoRechazo: 'Presupuesto no disponible este mes',
           items: { create: [{ productoId: elecMonitor.id, cantidad: 2 }] } },
+      });
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // GESTIÓN DE PEDIDOS POR PROYECTO (Fase 4, 2026-09-04) — alimenta el
+    // reporte "Consumo por Proyecto". 3 CDR y 4 Proyectos (uno CERRADO) de
+    // clientes contratantes + pedidos internos de proyecto ENTREGADOS que
+    // generan SALIDA valorizada (con proyectoId + pedidoInternoId en el
+    // Movimiento, igual que hace PedidosInternosService.entregar), repartidos
+    // en 3 meses (julio/agosto/septiembre) para que "Comparativo mensual"
+    // tenga 3 barras, más 3 pedidos abiertos como "pendientes por despachar".
+    // Septiembre en curso: S/ 15,130 en 4 movimientos.
+    // ══════════════════════════════════════════════════════════════════════
+    if (usrSolicitante && usrAdmin && usrAlmacenero) {
+      const [cdrMina, cdrObras] = await Promise.all([
+        tx.cDR.create({ data: { empresaId, codigo: 'CDR-MINA',  nombre: 'Gerencia de Mina',        responsable: 'Ing. Residente de Mina' } }),
+        tx.cDR.create({ data: { empresaId, codigo: 'CDR-OBRAS', nombre: 'Gerencia Obras Civiles', responsable: 'Ing. Residente de Obras' } }),
+      ]);
+      const [pryBocamina, pryTajo] = await Promise.all([
+        tx.proyecto.create({ data: { empresaId, codigo: 'PRY-02', nombre: 'AMPLIACION DE AVANCES BOCAMINA NORTE', cdrId: cdrMina.id,  clienteId: cliAndes.id, estado: 'EN_EJECUCION', fechaInicio: dias(-45) } }),
+        tx.proyecto.create({ data: { empresaId, codigo: 'PRY-01', nombre: 'Ampliacion Tajo Norte',                cdrId: cdrObras.id, clienteId: cliAndes.id, estado: 'EN_EJECUCION', fechaInicio: dias(-60) } }),
+      ]);
+
+      // Réplica del efecto de PedidosInternosService.entregar(): descuenta
+      // inventario y deja una SALIDA valorizada trazada al pedido y al proyecto.
+      const consumoProyecto = async (
+        productoId: string, cantidad: number, costoUnitario: number,
+        proyectoId: string, pedidoInternoId: string, numeroPedido: string, fecha: Date,
+      ) => {
+        const inv = await tx.inventario.findFirst({ where: { productoId, almacenId: almCentral.id, ubicacionId: null } });
+        if (inv) await tx.inventario.update({ where: { id: inv.id }, data: { cantidad: { decrement: cantidad } } });
+        await tx.movimiento.create({
+          data: {
+            empresaId, productoId, almacenId: almCentral.id, tipo: 'SALIDA', cantidad, costoUnitario,
+            motivo: 'Entrega de pedido interno de proyecto', documento: numeroPedido,
+            proyectoId, pedidoInternoId, fecha,
+          },
+        });
+      };
+
+      // PI-00008 · PRY-02 · Operaciones · ENTREGADO — 1 salida de S/ 15,000
+      const pi8 = await tx.pedidoInterno.create({
+        data: {
+          empresaId, numero: 'PI-00008', areaId: areaOps.id, almacenId: almCentral.id, proyectoId: pryBocamina.id,
+          estado: 'ENTREGADO', prioridad: 'URGENTE', usuarioSolicitaId: usrSolicitante.id, usuarioApruebaId: usrAdmin.id, usuarioEntregaId: usrAlmacenero.id,
+          fechaAprobacion: dias(-3), fechaEntrega: dias(-2), reciboConfirmado: true, fechaReciboConfirmado: dias(-1),
+          notasSolicitud: 'Insumos para el frente de avance de bocamina norte',
+          items: { create: [{ productoId: elecSSD.id, cantidad: 100 }] },
+        },
+      });
+      await consumoProyecto(elecSSD.id, 100, 150, pryBocamina.id, pi8.id, pi8.numero, dias(-2));
+
+      // PI-00009 · PRY-01 · Operaciones · ENTREGADO — 1 salida de S/ 40
+      const pi9 = await tx.pedidoInterno.create({
+        data: {
+          empresaId, numero: 'PI-00009', areaId: areaOps.id, almacenId: almCentral.id, proyectoId: pryTajo.id,
+          estado: 'ENTREGADO', prioridad: 'NORMAL', usuarioSolicitaId: usrSolicitante.id, usuarioApruebaId: usrAdmin.id, usuarioEntregaId: usrAlmacenero.id,
+          fechaAprobacion: dias(-4), fechaEntrega: dias(-3), reciboConfirmado: true, fechaReciboConfirmado: dias(-2),
+          notasSolicitud: 'Material de escritorio para la caseta de obra del tajo norte',
+          items: { create: [{ productoId: ofiLapicero.id, cantidad: 5 }] },
+        },
+      });
+      await consumoProyecto(ofiLapicero.id, 5, 8, pryTajo.id, pi9.id, pi9.numero, dias(-3));
+
+      // PI-00010 · PRY-01 · Administración · PICKING — pendiente por despachar
+      await tx.pedidoInterno.create({
+        data: {
+          empresaId, numero: 'PI-00010', areaId: areaAdm.id, almacenId: almCentral.id, proyectoId: pryTajo.id,
+          estado: 'PICKING', prioridad: 'NORMAL', usuarioSolicitaId: usrSolicitante.id, usuarioApruebaId: usrAdmin.id,
+          fechaAprobacion: dias(-1),
+          notasSolicitud: 'Reposición de útiles para la oficina técnica del proyecto',
+          items: { create: [{ productoId: ofiResma.id, cantidad: 10 }, { productoId: ofiLapicero.id, cantidad: 3 }] },
+        },
+      });
+
+      // PI-00011 · PRY-01 · Administración · ENTREGADO — 2 salidas por S/ 90 (50 + 40)
+      const pi11 = await tx.pedidoInterno.create({
+        data: {
+          empresaId, numero: 'PI-00011', areaId: areaAdm.id, almacenId: almCentral.id, proyectoId: pryTajo.id,
+          estado: 'ENTREGADO', prioridad: 'NORMAL', usuarioSolicitaId: usrSolicitante.id, usuarioApruebaId: usrAdmin.id, usuarioEntregaId: usrAlmacenero.id,
+          fechaAprobacion: dias(-5), fechaEntrega: dias(-4), reciboConfirmado: false,
+          notasSolicitud: 'Papelería para el cierre documentario de la valorización mensual',
+          items: { create: [{ productoId: ofiResma.id, cantidad: 5 }, { productoId: ofiLapicero.id, cantidad: 5 }] },
+        },
+      });
+      await consumoProyecto(ofiResma.id,    5, 10, pryTajo.id, pi11.id, pi11.numero, dias(-4));
+      await consumoProyecto(ofiLapicero.id, 5,  8, pryTajo.id, pi11.id, pi11.numero, dias(-4));
+
+      // ── Historial de 3 meses (backfill julio/agosto) ───────────────────
+      // 1 CDR y 2 proyectos más (uno CERRADO) + una tanda de pedidos
+      // ENTREGADOS repartidos por mes, para dar volumen al comparativo
+      // mensual y a las vistas Por Proyecto / Por CDR / Por Área.
+      const cdrPlanta = await tx.cDR.create({ data: { empresaId, codigo: 'CDR-PLANTA', nombre: 'Gerencia de Planta', responsable: 'Jefe de Mantenimiento' } });
+      const [pryPlanta, pryCampamento] = await Promise.all([
+        tx.proyecto.create({ data: { empresaId, codigo: 'PRY-03', nombre: 'Mantenimiento Planta Concentradora', cdrId: cdrPlanta.id, clienteId: cliSur.id,   estado: 'EN_EJECUCION', fechaInicio: dias(-80) } }),
+        tx.proyecto.create({ data: { empresaId, codigo: 'PRY-04', nombre: 'Habilitacion Campamento Km 12',       cdrId: cdrObras.id,  clienteId: cliNorte.id, estado: 'CERRADO',      fechaInicio: dias(-110), fechaFin: dias(-20) } }),
+      ]);
+
+      // Día fijo de un mes N meses atrás (mediodía; sin aritmética de días que
+      // cruce fin de mes).
+      const fechaMes = (mesesAtras: number, dia: number) =>
+        new Date(ahora.getFullYear(), ahora.getMonth() - mesesAtras, dia, 12, 0, 0);
+
+      const backfill: Array<{
+        numero: string; proyectoId: string; areaId: string; mesesAtras: number; dia: number;
+        prioridad: 'NORMAL' | 'URGENTE' | 'CRITICO'; nota: string;
+        items: Array<{ productoId: string; cantidad: number; costoUnitario: number }>;
+      }> = [
+        // ── Julio ──
+        { numero: 'PI-00012', proyectoId: pryBocamina.id,   areaId: areaOps.id, mesesAtras: 2, dia: 8,  prioridad: 'URGENTE', nota: 'Suministros para el frente de avance — quincena 1',
+          items: [{ productoId: ofiPostit.id, cantidad: 40, costoUnitario: 28 }, { productoId: elecCargador.id, cantidad: 8, costoUnitario: 62 }] },
+        { numero: 'PI-00013', proyectoId: pryTajo.id,       areaId: areaAdm.id, mesesAtras: 2, dia: 12, prioridad: 'NORMAL', nota: 'Papelería para la oficina técnica del tajo',
+          items: [{ productoId: ofiResma.id, cantidad: 25, costoUnitario: 12 }, { productoId: ofiLapicero.id, cantidad: 12, costoUnitario: 9 }] },
+        { numero: 'PI-00014', proyectoId: pryPlanta.id,     areaId: areaOps.id, mesesAtras: 2, dia: 17, prioridad: 'NORMAL', nota: 'Limpieza industrial para parada de planta',
+          items: [{ productoId: limpDesinfectante.id, cantidad: 22, costoUnitario: 22 }, { productoId: limpDetergente.id, cantidad: 5, costoUnitario: 80 }] },
+        { numero: 'PI-00015', proyectoId: pryBocamina.id,   areaId: areaOps.id, mesesAtras: 2, dia: 23, prioridad: 'URGENTE', nota: 'Repuestos y consumibles — quincena 2',
+          items: [{ productoId: elecSSD.id, cantidad: 10, costoUnitario: 135 }, { productoId: ofiPostit.id, cantidad: 30, costoUnitario: 27 }] },
+        { numero: 'PI-00016', proyectoId: pryCampamento.id, areaId: areaAdm.id, mesesAtras: 2, dia: 26, prioridad: 'NORMAL', nota: 'Habilitación de módulos administrativos',
+          items: [{ productoId: ofiResma.id, cantidad: 20, costoUnitario: 13 }, { productoId: ofiLapicero.id, cantidad: 10, costoUnitario: 8 }] },
+        { numero: 'PI-00017', proyectoId: pryPlanta.id,     areaId: areaSis.id, mesesAtras: 2, dia: 29, prioridad: 'NORMAL', nota: 'Equipamiento para la sala de control',
+          items: [{ productoId: elecCargador.id, cantidad: 9, costoUnitario: 60 }, { productoId: limpLejia.id, cantidad: 10, costoUnitario: 19 }] },
+        // ── Agosto ──
+        { numero: 'PI-00018', proyectoId: pryBocamina.id,   areaId: areaOps.id, mesesAtras: 1, dia: 5,  prioridad: 'URGENTE', nota: 'Suministros para el frente de avance — quincena 1',
+          items: [{ productoId: ofiPostit.id, cantidad: 45, costoUnitario: 28 }, { productoId: elecCargador.id, cantidad: 8, costoUnitario: 61 }] },
+        { numero: 'PI-00019', proyectoId: pryTajo.id,       areaId: areaAdm.id, mesesAtras: 1, dia: 9,  prioridad: 'NORMAL', nota: 'Papelería para la oficina técnica del tajo',
+          items: [{ productoId: ofiResma.id, cantidad: 22, costoUnitario: 12 }, { productoId: ofiLapicero.id, cantidad: 12, costoUnitario: 9 }] },
+        { numero: 'PI-00020', proyectoId: pryPlanta.id,     areaId: areaOps.id, mesesAtras: 1, dia: 14, prioridad: 'NORMAL', nota: 'Limpieza industrial — mantenimiento programado',
+          items: [{ productoId: limpDesinfectante.id, cantidad: 26, costoUnitario: 23 }, { productoId: limpDetergente.id, cantidad: 6, costoUnitario: 79 }] },
+        { numero: 'PI-00021', proyectoId: pryBocamina.id,   areaId: areaOps.id, mesesAtras: 1, dia: 19, prioridad: 'URGENTE', nota: 'Repuestos y consumibles — quincena 2',
+          items: [{ productoId: elecSSD.id, cantidad: 12, costoUnitario: 132 }, { productoId: ofiPostit.id, cantidad: 35, costoUnitario: 28 }] },
+        { numero: 'PI-00022', proyectoId: pryCampamento.id, areaId: areaAdm.id, mesesAtras: 1, dia: 22, prioridad: 'NORMAL', nota: 'Cierre de habilitación del campamento',
+          items: [{ productoId: ofiResma.id, cantidad: 24, costoUnitario: 13 }, { productoId: ofiLapicero.id, cantidad: 10, costoUnitario: 8 }] },
+        { numero: 'PI-00023', proyectoId: pryPlanta.id,     areaId: areaSis.id, mesesAtras: 1, dia: 27, prioridad: 'NORMAL', nota: 'Ampliación de la sala de control',
+          items: [{ productoId: elecCargador.id, cantidad: 10, costoUnitario: 60 }, { productoId: limpLejia.id, cantidad: 12, costoUnitario: 19 }] },
+      ];
+      for (const pi of backfill) {
+        const cab = await tx.pedidoInterno.create({
+          data: {
+            empresaId, numero: pi.numero, areaId: pi.areaId, almacenId: almCentral.id, proyectoId: pi.proyectoId,
+            estado: 'ENTREGADO', prioridad: pi.prioridad,
+            usuarioSolicitaId: usrSolicitante.id, usuarioApruebaId: usrAdmin.id, usuarioEntregaId: usrAlmacenero.id,
+            fechaAprobacion: fechaMes(pi.mesesAtras, pi.dia - 2),
+            fechaEntrega: fechaMes(pi.mesesAtras, pi.dia),
+            reciboConfirmado: true, fechaReciboConfirmado: fechaMes(pi.mesesAtras, pi.dia + 1),
+            notasSolicitud: pi.nota,
+            items: { create: pi.items.map((it) => ({ productoId: it.productoId, cantidad: it.cantidad })) },
+          },
+        });
+        for (const it of pi.items) {
+          await consumoProyecto(it.productoId, it.cantidad, it.costoUnitario, pi.proyectoId, cab.id, cab.numero, fechaMes(pi.mesesAtras, pi.dia));
+        }
+      }
+
+      // Dos pendientes más del mes en curso (además de PI-00010) para que
+      // "Pendientes por despachar" no se vea con un único registro.
+      await tx.pedidoInterno.create({
+        data: {
+          empresaId, numero: 'PI-00024', areaId: areaOps.id, almacenId: almCentral.id, proyectoId: pryPlanta.id,
+          estado: 'PICKING', prioridad: 'URGENTE', usuarioSolicitaId: usrSolicitante.id, usuarioApruebaId: usrAdmin.id, fechaAprobacion: dias(-2),
+          notasSolicitud: 'Insumos de limpieza para la próxima parada de planta',
+          items: { create: [{ productoId: ofiPostit.id, cantidad: 20 }, { productoId: limpDesinfectante.id, cantidad: 10 }] },
+        },
+      });
+      await tx.pedidoInterno.create({
+        data: {
+          empresaId, numero: 'PI-00025', areaId: areaOps.id, almacenId: almCentral.id, proyectoId: pryBocamina.id,
+          estado: 'APROBADO', prioridad: 'NORMAL', usuarioSolicitaId: usrSolicitante.id, usuarioApruebaId: usrAdmin.id, fechaAprobacion: dias(-1),
+          notasSolicitud: 'Repuestos para el frente de avance — pendiente de picking',
+          items: { create: [{ productoId: elecSSD.id, cantidad: 6 }, { productoId: elecCargador.id, cantidad: 8 }] },
+        },
+      });
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // OPORTUNIDADES COMERCIALES (16) — módulo Seguimiento Comercial (Fase 10).
+    // Cubre las 4 etapas abiertas del pipeline + cierres GANADA / PERDIDA /
+    // CANCELADA, repartidas entre 4 vendedores (Admin, Ejecutivo Comercial,
+    // Carla y Gerente de Operaciones) para poblar también "Rendimiento por
+    // vendedor" con casos contrastados: ganadas y perdidas por vendedor,
+    // conversión distinta por persona, y un vendedor (Gerente) solo con
+    // pipeline. Semáforo de seguimiento variado: sin actividad / al día /
+    // 3-5 días / 12 días sin seguimiento. Se usan las 7 empresas cliente y
+    // toda la gama de `fuente` y de `TipoActividadComercial`. Los campos
+    // denormalizados (fechaUltimaActividad / proximaAccion / fechaProximaAccion)
+    // se fijan a mano acá porque las actividades se siembran directo, sin pasar
+    // por OportunidadesService.registrarActividad.
+    // ══════════════════════════════════════════════════════════════════════
+    const [usrComercial, usrCarla, usrGerente] = await Promise.all([
+      tx.usuario.findFirst({ where: { empresaId, email: 'comercial@dlnorte.demo' } }),
+      tx.usuario.findFirst({ where: { empresaId, email: 'comercial2@dlnorte.demo' } }),
+      tx.usuario.findFirst({ where: { empresaId, email: 'gerente@dlnorte.demo' } }),
+    ]);
+    if (usrAdmin && usrComercial && usrCarla) {
+      // Metas mensuales: Carla la supera (S/ 1,000 vs S/ 7,500 ganados este
+      // mes → verde), el Ejecutivo no la alcanza (S/ 5,000 vs S/ 3,400 → rojo),
+      // y Admin / Gerente quedan "Sin meta" — el ranking muestra los 3 casos.
+      await tx.usuario.update({ where: { id: usrCarla.id }, data: { metaVentasMensual: 1000 } });
+      await tx.usuario.update({ where: { id: usrComercial.id }, data: { metaVentasMensual: 5000 } });
+
+      // ── OP-00001 · GANADA (Admin) — cerrada hace 5 días, dentro del mes ──
+      const opGanada = await tx.oportunidad.create({
+        data: {
+          empresaId, codigo: 'OP-00001', clienteId: cliNorte.id, responsableId: usrAdmin.id,
+          estado: 'GANADA', probabilidad: 100, valorEstimado: 52000,
+          descripcion: 'Servicio de distribución mensual a 8 sucursales en el norte del país',
+          necesidad: 'Tercerizar el reparto con entregas dos veces por semana y SLA de 24 h',
+          fuente: 'Referido', fechaEstimadaCierre: dias(-3), fechaCierre: dias(-5),
+          fechaUltimaActividad: dias(-6),
+        },
+      });
+      await tx.actividadComercial.createMany({
+        data: [
+          { oportunidadId: opGanada.id, usuarioId: usrAdmin.id, tipo: 'REUNION',            fecha: dias(-20), resultado: 'Reunión inicial: se levantó el requerimiento de reparto y los volúmenes por sucursal.' },
+          { oportunidadId: opGanada.id, usuarioId: usrAdmin.id, tipo: 'COTIZACION_ENVIADA', fecha: dias(-12), resultado: 'Se envió la propuesta con tarifa por punto de entrega y SLA comprometido.' },
+          { oportunidadId: opGanada.id, usuarioId: usrAdmin.id, tipo: 'NEGOCIACION',         fecha: dias(-6),  resultado: 'Ajuste de tarifa por volumen; el cliente confirmó la adjudicación.' },
+        ],
+      });
+
+      // ── OP-00002 · EN NEGOCIACIÓN (Admin) — al día ──────────────────────
+      const opNego = await tx.oportunidad.create({
+        data: {
+          empresaId, codigo: 'OP-00002', clienteId: cliSur.id, responsableId: usrAdmin.id,
+          estado: 'EN_NEGOCIACION', probabilidad: 80, valorEstimado: 13200,
+          descripcion: 'Requiere traslado de dos toneladas de insumos entre planta y almacén central',
+          necesidad: 'Flete recurrente semanal con unidad de 3 t y maniobras de carga incluidas',
+          fuente: 'Cliente recurrente', fechaEstimadaCierre: dias(7),
+          fechaUltimaActividad: dias(-1), proximaAccion: 'Visita a instalaciones', fechaProximaAccion: dias(3),
+        },
+      });
+      await tx.actividadComercial.createMany({
+        data: [
+          { oportunidadId: opNego.id, usuarioId: usrAdmin.id, tipo: 'LLAMADA',            fecha: dias(-8), resultado: 'El cliente pidió cotización formal para un flete recurrente.' },
+          { oportunidadId: opNego.id, usuarioId: usrAdmin.id, tipo: 'COTIZACION_ENVIADA', fecha: dias(-4), resultado: 'Propuesta enviada; el cliente solicitó revisar el precio por maniobras.' },
+          { oportunidadId: opNego.id, usuarioId: usrAdmin.id, tipo: 'NEGOCIACION',        fecha: dias(-1), resultado: 'Acuerdo verbal sobre la tarifa; pendiente la visita para cerrar condiciones.', proximaAccion: 'Visita a instalaciones', fechaProximaAccion: dias(3) },
+        ],
+      });
+
+      // ── OP-00003 · CALIFICADA (Admin) — 5 días sin seguimiento ──────────
+      const opCalif = await tx.oportunidad.create({
+        data: {
+          empresaId, codigo: 'OP-00003', clienteId: cliSur.id, responsableId: usrAdmin.id,
+          estado: 'CALIFICADA', probabilidad: 30, valorEstimado: 6000,
+          descripcion: 'Importación de escobillas de carbón 2/4" x 0.5" para motores de aspiradoras industriales',
+          necesidad: 'Lote de prueba de 500 unidades con posibilidad de compra recurrente',
+          fuente: 'Página web', fechaEstimadaCierre: dias(25),
+          fechaUltimaActividad: dias(-5), proximaAccion: 'Reunión en línea', fechaProximaAccion: dias(2),
+        },
+      });
+      await tx.actividadComercial.createMany({
+        data: [
+          { oportunidadId: opCalif.id, usuarioId: usrAdmin.id, tipo: 'EMAIL',   fecha: dias(-9), resultado: 'El cliente detalló la especificación técnica de la escobilla y el consumo mensual.' },
+          { oportunidadId: opCalif.id, usuarioId: usrAdmin.id, tipo: 'LLAMADA',  fecha: dias(-5), resultado: 'Se confirmó necesidad real y presupuesto; queda coordinar la reunión para presentar la propuesta.', proximaAccion: 'Reunión en línea', fechaProximaAccion: dias(2) },
+        ],
+      });
+
+      // ── OP-00004 · NUEVA (Ejecutivo Comercial) — sin actividad ──────────
+      await tx.oportunidad.create({
+        data: {
+          empresaId, codigo: 'OP-00004', clienteId: cliAndes.id, responsableId: usrComercial.id,
+          estado: 'NUEVA', probabilidad: 10, valorEstimado: 12652,
+          descripcion: 'Transporte de materiales de construcción a una obra en las afueras de la ciudad',
+          necesidad: 'Dos viajes de volquete con material granular; fecha por confirmar',
+          fuente: 'Llamada en frío', fechaEstimadaCierre: dias(18),
+        },
+      });
+
+      // ── OP-00005 · NUEVA (Carla) — al día, con el primer seguimiento ────
+      const opNueva5 = await tx.oportunidad.create({
+        data: {
+          empresaId, codigo: 'OP-00005', clienteId: cliAndina.id, responsableId: usrCarla.id,
+          estado: 'NUEVA', probabilidad: 10, valorEstimado: 16000,
+          descripcion: 'Suministro de carbones para motores de scoop en operación minera',
+          necesidad: 'Abastecimiento trimestral con entrega en mina; requiere ficha técnica y certificado',
+          fuente: 'Feria / Evento', fechaEstimadaCierre: dias(30),
+          fechaUltimaActividad: dias(-1), proximaAccion: 'Seguir el contacto', fechaProximaAccion: dias(4),
+        },
+      });
+      await tx.actividadComercial.create({
+        data: { oportunidadId: opNueva5.id, usuarioId: usrCarla.id, tipo: 'WHATSAPP', fecha: dias(-1), resultado: 'Primer contacto tras la feria; el cliente pidió la ficha técnica y algunas referencias.', proximaAccion: 'Seguir el contacto', fechaProximaAccion: dias(4) },
+      });
+
+      // ── OP-00006 · COTIZADA (Carla) — al día ────────────────────────────
+      const opCotiz = await tx.oportunidad.create({
+        data: {
+          empresaId, codigo: 'OP-00006', clienteId: cliPacifico.id, responsableId: usrCarla.id,
+          estado: 'COTIZADA', probabilidad: 60, valorEstimado: 2800,
+          descripcion: 'Transporte de tres toneladas de productos terminados a un centro de distribución',
+          necesidad: 'Servicio puntual con recojo en planta y entrega el mismo día',
+          fuente: 'Referido', fechaEstimadaCierre: dias(10),
+          fechaUltimaActividad: dias(-2), proximaAccion: 'Llamada de cierre', fechaProximaAccion: dias(1),
+        },
+      });
+      await tx.actividadComercial.createMany({
+        data: [
+          { oportunidadId: opCotiz.id, usuarioId: usrCarla.id, tipo: 'LLAMADA',            fecha: dias(-6), resultado: 'El cliente detalló el volumen y la ventana de entrega requerida.' },
+          { oportunidadId: opCotiz.id, usuarioId: usrCarla.id, tipo: 'COTIZACION_ENVIADA', fecha: dias(-2), resultado: 'Cotización enviada; el cliente la está evaluando y responde esta semana.', proximaAccion: 'Llamada de cierre', fechaProximaAccion: dias(1) },
+        ],
+      });
+
+      // ── OP-00007 · PERDIDA (Ejecutivo Comercial) — cerrada hace 8 días ──
+      const opPerdida7 = await tx.oportunidad.create({
+        data: {
+          empresaId, codigo: 'OP-00007', clienteId: cliConstructor.id, responsableId: usrComercial.id,
+          estado: 'PERDIDA', probabilidad: 0, valorEstimado: 4200,
+          descripcion: 'Reparto quincenal de material de ferretería a tres tiendas de la ciudad',
+          necesidad: 'Distribución con unidad ligera y ventana de entrega antes de las 9 a. m.',
+          fuente: 'Página web', fechaEstimadaCierre: dias(-10), fechaCierre: dias(-8),
+          motivoPerdida: 'Precio no competitivo', fechaUltimaActividad: dias(-9),
+        },
+      });
+      await tx.actividadComercial.createMany({
+        data: [
+          { oportunidadId: opPerdida7.id, usuarioId: usrComercial.id, tipo: 'LLAMADA',            fecha: dias(-18), resultado: 'El cliente describió el circuito de reparto y los horarios de recepción de cada tienda.' },
+          { oportunidadId: opPerdida7.id, usuarioId: usrComercial.id, tipo: 'COTIZACION_ENVIADA', fecha: dias(-13), resultado: 'Se envió la propuesta con tarifa por punto de entrega.' },
+          { oportunidadId: opPerdida7.id, usuarioId: usrComercial.id, tipo: 'NEGOCIACION',         fecha: dias(-9),  resultado: 'El cliente adjudicó el servicio a otro proveedor con una tarifa 15 % menor.' },
+        ],
+      });
+
+      // ── OP-00008 · PERDIDA (Admin) — cerrada hace 15 días ──────────────
+      const opPerdida8 = await tx.oportunidad.create({
+        data: {
+          empresaId, codigo: 'OP-00008', clienteId: cliLima.id, responsableId: usrAdmin.id,
+          estado: 'PERDIDA', probabilidad: 0, valorEstimado: 9800,
+          descripcion: 'Transporte de maquinaria menor entre dos sedes del cliente en Lima',
+          necesidad: 'Servicio con plataforma y maniobras de izaje; fecha única',
+          fuente: 'Referido', fechaEstimadaCierre: dias(-12), fechaCierre: dias(-15),
+          motivoPerdida: 'El cliente pospuso el proyecto', fechaUltimaActividad: dias(-16),
+        },
+      });
+      await tx.actividadComercial.createMany({
+        data: [
+          { oportunidadId: opPerdida8.id, usuarioId: usrAdmin.id, tipo: 'REUNION',            fecha: dias(-28), resultado: 'Se relevó el detalle de la maquinaria, pesos y accesos a cada sede.' },
+          { oportunidadId: opPerdida8.id, usuarioId: usrAdmin.id, tipo: 'COTIZACION_ENVIADA', fecha: dias(-20), resultado: 'Propuesta enviada con plataforma cama baja y cuadrilla de maniobras.' },
+          { oportunidadId: opPerdida8.id, usuarioId: usrAdmin.id, tipo: 'EMAIL',              fecha: dias(-16), resultado: 'El cliente comunicó que congeló la inversión y el traslado queda sin fecha.' },
+        ],
+      });
+
+      // ── OP-00009 · GANADA (Carla) — cerrada este mes, supera su meta ───
+      const opGanada9 = await tx.oportunidad.create({
+        data: {
+          empresaId, codigo: 'OP-00009', clienteId: cliAndina.id, responsableId: usrCarla.id,
+          estado: 'GANADA', probabilidad: 100, valorEstimado: 7500,
+          descripcion: 'Traslado mensual de repuestos desde el almacén central a la unidad minera',
+          necesidad: 'Dos entregas al mes en mina con manifiesto y seguimiento GPS',
+          fuente: 'Feria / Evento', fechaEstimadaCierre: dias(-2), fechaCierre: dias(-4),
+          fechaUltimaActividad: dias(-4),
+        },
+      });
+      await tx.actividadComercial.createMany({
+        data: [
+          { oportunidadId: opGanada9.id, usuarioId: usrCarla.id, tipo: 'VISITA',             fecha: dias(-16), resultado: 'Visita al almacén del cliente para dimensionar volúmenes y frecuencia.' },
+          { oportunidadId: opGanada9.id, usuarioId: usrCarla.id, tipo: 'COTIZACION_ENVIADA', fecha: dias(-10), resultado: 'Propuesta con tarifa mensual cerrada y ventana de entrega garantizada.' },
+          { oportunidadId: opGanada9.id, usuarioId: usrCarla.id, tipo: 'NEGOCIACION',         fecha: dias(-4),  resultado: 'El cliente aceptó la tarifa y firmó la orden de servicio.' },
+        ],
+      });
+
+      // ── OP-00010 · GANADA (Ejecutivo Comercial) — cerrada este mes ─────
+      const opGanada10 = await tx.oportunidad.create({
+        data: {
+          empresaId, codigo: 'OP-00010', clienteId: cliPacifico.id, responsableId: usrComercial.id,
+          estado: 'GANADA', probabilidad: 100, valorEstimado: 3400,
+          descripcion: 'Servicio puntual de transporte de producto terminado a feria comercial',
+          necesidad: 'Recojo en planta y entrega el mismo día en el recinto ferial',
+          fuente: 'Llamada en frío', fechaEstimadaCierre: dias(-9), fechaCierre: dias(-10),
+          fechaUltimaActividad: dias(-10),
+        },
+      });
+      await tx.actividadComercial.createMany({
+        data: [
+          { oportunidadId: opGanada10.id, usuarioId: usrComercial.id, tipo: 'WHATSAPP',           fecha: dias(-15), resultado: 'El cliente pidió cotización rápida para un traslado con fecha fija.' },
+          { oportunidadId: opGanada10.id, usuarioId: usrComercial.id, tipo: 'COTIZACION_ENVIADA', fecha: dias(-12), resultado: 'Cotización enviada el mismo día; el cliente confirmó por correo.' },
+        ],
+      });
+
+      // ── OP-00011 · GANADA (Admin) — cerrada el mes pasado ─────────────
+      // Suma al "Valor ganado" acumulado y a la conversión, pero NO al
+      // "Valor ganado del mes" del ranking (fechaCierre < inicio de mes).
+      const opGanada11 = await tx.oportunidad.create({
+        data: {
+          empresaId, codigo: 'OP-00011', clienteId: cliSur.id, responsableId: usrAdmin.id,
+          estado: 'GANADA', probabilidad: 100, valorEstimado: 21000,
+          descripcion: 'Contrato trimestral de distribución de insumos a cuatro plantas del grupo',
+          necesidad: 'Ruta fija tres veces por semana con SLA de 24 h y reporte semanal',
+          fuente: 'Cliente recurrente', fechaEstimadaCierre: dias(-35), fechaCierre: dias(-38),
+          fechaUltimaActividad: dias(-38),
+        },
+      });
+      await tx.actividadComercial.createMany({
+        data: [
+          { oportunidadId: opGanada11.id, usuarioId: usrAdmin.id, tipo: 'REUNION',            fecha: dias(-55), resultado: 'Reunión con el área de logística del grupo para definir alcance y volúmenes.' },
+          { oportunidadId: opGanada11.id, usuarioId: usrAdmin.id, tipo: 'VIDEOLLAMADA',       fecha: dias(-48), resultado: 'Revisión de rutas y puntos de entrega con los jefes de planta.' },
+          { oportunidadId: opGanada11.id, usuarioId: usrAdmin.id, tipo: 'COTIZACION_ENVIADA', fecha: dias(-44), resultado: 'Propuesta trimestral enviada con escalonamiento por volumen.' },
+          { oportunidadId: opGanada11.id, usuarioId: usrAdmin.id, tipo: 'NEGOCIACION',         fecha: dias(-38), resultado: 'Se cerró el contrato tras ajustar el reporte semanal solicitado.' },
+        ],
+      });
+
+      // ── OP-00013 · CALIFICADA (Carla) — al día ────────────────────────
+      const opCalif13 = await tx.oportunidad.create({
+        data: {
+          empresaId, codigo: 'OP-00013', clienteId: cliConstructor.id, responsableId: usrCarla.id,
+          estado: 'CALIFICADA', probabilidad: 30, valorEstimado: 5600,
+          descripcion: 'Abastecimiento de escobillas y carbones para el taller de mantenimiento del cliente',
+          necesidad: 'Compra recurrente mensual con stock de seguridad en el almacén del proveedor',
+          fuente: 'LinkedIn', fechaEstimadaCierre: dias(22),
+          fechaUltimaActividad: dias(-2), proximaAccion: 'Enviar propuesta', fechaProximaAccion: dias(3),
+        },
+      });
+      await tx.actividadComercial.createMany({
+        data: [
+          { oportunidadId: opCalif13.id, usuarioId: usrCarla.id, tipo: 'EMAIL',   fecha: dias(-6), resultado: 'El cliente compartió el listado de referencias y el consumo histórico.' },
+          { oportunidadId: opCalif13.id, usuarioId: usrCarla.id, tipo: 'LLAMADA',  fecha: dias(-2), resultado: 'Se confirmó presupuesto y periodicidad; queda preparar la propuesta formal.', proximaAccion: 'Enviar propuesta', fechaProximaAccion: dias(3) },
+        ],
+      });
+
+      // ── OP-00014 · COTIZADA (Ejecutivo Comercial) — 3 días sin seguimiento ──
+      const opCotiz14 = await tx.oportunidad.create({
+        data: {
+          empresaId, codigo: 'OP-00014', clienteId: cliLima.id, responsableId: usrComercial.id,
+          estado: 'COTIZADA', probabilidad: 60, valorEstimado: 8900,
+          descripcion: 'Transporte semanal de mercadería paletizada a un centro de distribución en Lima',
+          necesidad: 'Unidad de 3.5 t con estibadores; ventana de descarga de 6 a 8 a. m.',
+          fuente: 'Referido', fechaEstimadaCierre: dias(12),
+          fechaUltimaActividad: dias(-3), proximaAccion: 'Llamada de seguimiento', fechaProximaAccion: dias(1),
+        },
+      });
+      await tx.actividadComercial.createMany({
+        data: [
+          { oportunidadId: opCotiz14.id, usuarioId: usrComercial.id, tipo: 'LLAMADA',              fecha: dias(-9), resultado: 'El cliente detalló volúmenes semanales y restricciones de horario del CD.' },
+          { oportunidadId: opCotiz14.id, usuarioId: usrComercial.id, tipo: 'COTIZACION_ENVIADA',   fecha: dias(-6), resultado: 'Cotización enviada con tarifa semanal y opción de unidad dedicada.' },
+          { oportunidadId: opCotiz14.id, usuarioId: usrComercial.id, tipo: 'COTIZACION_MODIFICADA', fecha: dias(-3), resultado: 'El cliente pidió reemplazar la unidad dedicada por servicio compartido; se recalculó la tarifa.', proximaAccion: 'Llamada de seguimiento', fechaProximaAccion: dias(1) },
+        ],
+      });
+
+      // ── OP-00016 · CANCELADA (Carla) — cerrada hace 6 días ────────────
+      const opCancel16 = await tx.oportunidad.create({
+        data: {
+          empresaId, codigo: 'OP-00016', clienteId: cliPacifico.id, responsableId: usrCarla.id,
+          estado: 'CANCELADA', probabilidad: 0, valorEstimado: 3000,
+          descripcion: 'Traslado único de mobiliario de oficina a la nueva sede del cliente',
+          necesidad: 'Servicio con furgón y embalaje básico; fecha tentativa fin de mes',
+          fuente: 'Feria / Evento', fechaEstimadaCierre: dias(-4), fechaCierre: dias(-6),
+          observaciones: 'El cliente canceló la mudanza por una reestructuración interna; retomaría el próximo trimestre.',
+          fechaUltimaActividad: dias(-7),
+        },
+      });
+      await tx.actividadComercial.create({
+        data: { oportunidadId: opCancel16.id, usuarioId: usrCarla.id, tipo: 'LLAMADA', fecha: dias(-7), resultado: 'El cliente avisó que se posterga la mudanza; se cierra la oportunidad sin costo.' },
+      });
+    }
+
+    // ── Oportunidades del Gerente de Operaciones — solo pipeline, sin cierres.
+    // Le dan presencia en "Rendimiento por vendedor" (abiertas + pipeline) sin
+    // ganadas ni perdidas, para contrastar con los vendedores que ya cerraron.
+    if (usrGerente) {
+      // ── OP-00012 · EN NEGOCIACIÓN (Gerente) — 12 días sin seguimiento ──
+      const opNego12 = await tx.oportunidad.create({
+        data: {
+          empresaId, codigo: 'OP-00012', clienteId: cliNorte.id, responsableId: usrGerente.id,
+          estado: 'EN_NEGOCIACION', probabilidad: 80, valorEstimado: 18500,
+          descripcion: 'Operación logística tercerizada para la campaña de fin de año del distribuidor',
+          necesidad: 'Refuerzo de flota por tres meses con coordinador dedicado en sitio',
+          fuente: 'Cliente recurrente', fechaEstimadaCierre: dias(9),
+          fechaUltimaActividad: dias(-12), proximaAccion: 'Retomar contacto — propuesta pendiente de respuesta', fechaProximaAccion: dias(-2),
+        },
+      });
+      await tx.actividadComercial.createMany({
+        data: [
+          { oportunidadId: opNego12.id, usuarioId: usrGerente.id, tipo: 'REUNION',            fecha: dias(-25), resultado: 'Reunión de arranque: se dimensionó la campaña y el refuerzo de flota requerido.' },
+          { oportunidadId: opNego12.id, usuarioId: usrGerente.id, tipo: 'VIDEOLLAMADA',       fecha: dias(-18), resultado: 'Revisión del plan de rutas y del perfil del coordinador en sitio.' },
+          { oportunidadId: opNego12.id, usuarioId: usrGerente.id, tipo: 'COTIZACION_ENVIADA', fecha: dias(-12), resultado: 'Propuesta enviada por los tres meses; el cliente quedó de revisarla con gerencia.', proximaAccion: 'Retomar contacto — propuesta pendiente de respuesta', fechaProximaAccion: dias(-2) },
+        ],
+      });
+
+      // ── OP-00015 · NUEVA (Gerente) — sin actividad ───────────────────
+      await tx.oportunidad.create({
+        data: {
+          empresaId, codigo: 'OP-00015', clienteId: cliAndes.id, responsableId: usrGerente.id,
+          estado: 'NUEVA', probabilidad: 10, valorEstimado: 6400,
+          descripcion: 'Transporte de agregados a una obra vial en las afueras de la ciudad',
+          necesidad: 'Cuatro viajes de volquete con material seleccionado; cronograma por definir',
+          fuente: 'Llamada en frío', fechaEstimadaCierre: dias(20),
+        },
       });
     }
 

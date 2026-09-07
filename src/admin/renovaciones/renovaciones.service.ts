@@ -33,12 +33,22 @@ export class RenovacionesService {
    * Crea el registro de pago Y extiende la vigencia de la empresa en la misma
    * transacción — antes, registrar un pago no actualizaba Empresa.fechaVencimiento
    * ni Empresa.plan, dejando la extensión de vigencia como un paso manual aparte.
+   *
+   * También resetea `activo:true, estado:'activo'` (2026-09-04): si el cron de
+   * vencimiento (NegociosService.actualizarEstadosVencimiento) ya había
+   * marcado la empresa como 'vencido' con activo=false, sin esto el pago
+   * quedaba registrado pero el negocio seguía bloqueado hasta que alguien lo
+   * reactivara a mano por separado. No pisa 'cancelado'/'archivado' — esos
+   * son decisiones explícitas del PlatformAdmin más allá de la simple
+   * vigencia, así que si de verdad corresponde reactivar a un negocio
+   * cancelado/archivado, que sea una acción aparte y consciente.
    */
   async create(dto: CreateRenovacionDto) {
-    await this.validarEmpresa(dto.empresaId);
+    const empresa = await this.validarEmpresa(dto.empresaId);
     await this.validarPlan(dto.planId);
 
     const periodoFin = new Date(dto.periodoFin);
+    const reactivar = !['cancelado', 'archivado'].includes(empresa.estado);
 
     const [renovacion] = await this.prisma.$transaction([
       this.prisma.renovacionPlan.create({
@@ -57,7 +67,11 @@ export class RenovacionesService {
       }),
       this.prisma.empresa.update({
         where: { id: dto.empresaId },
-        data: { plan: dto.planId, fechaVencimiento: periodoFin },
+        data: {
+          plan: dto.planId,
+          fechaVencimiento: periodoFin,
+          ...(reactivar && { activo: true, estado: 'activo' }),
+        },
       }),
     ]);
 

@@ -21,13 +21,14 @@ export class PedidosInternosService {
     private readonly movimientosService: MovimientosService,
   ) {}
 
-  findAll(empresaId: string, filtros: { areaId?: string; estado?: string } = {}) {
+  findAll(empresaId: string, filtros: { areaId?: string; estado?: string; proyectoId?: string } = {}) {
     return this.prisma.withTenant(empresaId, (tx) =>
       tx.pedidoInterno.findMany({
         where: {
           empresaId,
           ...(filtros.areaId && { areaId: filtros.areaId }),
           ...(filtros.estado && { estado: validarEnum(filtros.estado, Object.values(EstadoPedidoInterno)) }),
+          ...(filtros.proyectoId && { proyectoId: filtros.proyectoId }),
         },
         include: {
           items: true,
@@ -38,6 +39,7 @@ export class PedidosInternosService {
           usuarioSolicita: { select: { nombre: true } },
           usuarioAprueba: { select: { nombre: true } },
           usuarioEntrega: { select: { nombre: true } },
+          proyecto: { select: { id: true, codigo: true, nombre: true } },
         },
         orderBy: { fecha: 'desc' },
         take: 500,
@@ -58,7 +60,10 @@ export class PedidosInternosService {
 
   async findOne(empresaId: string, id: string) {
     const pedido = await this.prisma.withTenant(empresaId, (tx) =>
-      tx.pedidoInterno.findFirst({ where: { id, empresaId }, include: { items: true } }),
+      tx.pedidoInterno.findFirst({
+        where: { id, empresaId },
+        include: { items: true, proyecto: { select: { id: true, codigo: true, nombre: true } } },
+      }),
     );
     if (!pedido) throw new NotFoundException('Pedido interno no encontrado');
     return pedido;
@@ -68,6 +73,7 @@ export class PedidosInternosService {
   async create(empresaId: string, usuarioSolicitaId: string, dto: CreatePedidoInternoDto) {
     await this.validarArea(empresaId, dto.areaId);
     await this.validarAlmacen(empresaId, dto.almacenId);
+    if (dto.proyectoId) await this.validarProyecto(empresaId, dto.proyectoId);
     for (const item of dto.items) {
       await this.validarProducto(empresaId, item.productoId);
     }
@@ -83,6 +89,7 @@ export class PedidosInternosService {
             numero,
             areaId: dto.areaId,
             almacenId: dto.almacenId,
+            proyectoId: dto.proyectoId,
             fechaRequerida: dto.fechaRequerida ? new Date(dto.fechaRequerida) : null,
             prioridad: dto.prioridad,
             notasSolicitud: dto.notasSolicitud,
@@ -112,6 +119,7 @@ export class PedidosInternosService {
     if (pedido.estado !== 'BORRADOR') {
       throw new ForbiddenException('Solo se puede editar un pedido en estado BORRADOR');
     }
+    if (dto.proyectoId) await this.validarProyecto(empresaId, dto.proyectoId);
     return this.prisma.withTenant(empresaId, (tx) =>
       tx.pedidoInterno.update({
         where: { id },
@@ -119,6 +127,7 @@ export class PedidosInternosService {
           ...(dto.fechaRequerida !== undefined && { fechaRequerida: new Date(dto.fechaRequerida) }),
           ...(dto.prioridad !== undefined && { prioridad: dto.prioridad }),
           ...(dto.notasSolicitud !== undefined && { notasSolicitud: dto.notasSolicitud }),
+          ...(dto.proyectoId !== undefined && { proyectoId: dto.proyectoId }),
         },
         include: { items: true },
       }),
@@ -130,12 +139,20 @@ export class PedidosInternosService {
     return this.transicionSimple(empresaId, id, ['BORRADOR'], 'ENVIADO', { fechaEnvio: new Date() });
   }
 
-  /** ENVIADO -> APROBADO. */
+  /**
+   * ENVIADO -> APROBADO. Chequeo fail-fast: evita aprobar (y que Almacén
+   * empiece a preparar) un pedido que ya se ve inviable en este momento —
+   * pero NO reemplaza el chequeo de entregar(): Pedidos Internos no reserva
+   * stock en ningún paso, así que lo disponible aquí puede no seguir estando
+   * disponible más adelante (otro pedido/despacho de por medio). El chequeo
+   * de entregar() sigue siendo el autoritativo.
+   */
   async aprobar(empresaId: string, id: string, usuarioApruebaId: string, dto: AprobarPedidoDto) {
     const pedido = await this.findOne(empresaId, id);
     if (pedido.estado !== 'ENVIADO') {
       throw new ForbiddenException(`No se puede aprobar un pedido en estado ${pedido.estado}`);
     }
+    await this.validarStockDisponible(empresaId, pedido);
     return this.prisma.withTenant(empresaId, (tx) =>
       tx.pedidoInterno.update({
         where: { id },
@@ -189,38 +206,37 @@ export class PedidosInternosService {
     // Valida el stock de TODOS los ítems antes de mutar nada — evita que un
     // for con await corte el loop en el primer faltante (dejando movimientos
     // ya aplicados y sin informar el resto de los productos con stock corto).
-    const productos = await this.prisma.withTenant(empresaId, (tx) =>
-      tx.producto.findMany({
-        where: { id: { in: pedido.items.map((i) => i.productoId) } },
-        select: { id: true, nombre: true },
-      }),
-    );
-    const nombrePorId = new Map(productos.map((p) => [p.id, p.nombre]));
-
-    const faltantes: string[] = [];
-    for (const item of pedido.items) {
-      const disponible = await this.disponible(empresaId, item.productoId, pedido.almacenId);
-      const requerido = Number(item.cantidad);
-      if (disponible < requerido) {
-        const nombre = nombrePorId.get(item.productoId) ?? item.productoId;
-        faltantes.push(`${nombre}: disponible ${disponible}, se requieren ${requerido}`);
-      }
-    }
-    if (faltantes.length > 0) {
-      throw new BadRequestException(
-        `Stock insuficiente en el almacén para:\n- ${faltantes.join('\n- ')}`,
-      );
-    }
+    await this.validarStockDisponible(empresaId, pedido);
 
     return this.prisma.withTenant(empresaId, async (tx) => {
+      // A diferencia de OC/Despacho, PedidoInternoItem no captura un costo
+      // propio (nunca hay pricing en un pedido interno) — así que el costo
+      // de la SALIDA se toma de Producto.precioCompra vigente al momento de
+      // entregar. Sin esto, el Movimiento queda con costoUnitario null y el
+      // reporte de Consumo por Proyecto (que existe justamente para
+      // valorizar esto) muestra S/0.00 aunque sí haya movimientos.
+      const productos = await tx.producto.findMany({
+        where: { id: { in: pedido.items.map((i) => i.productoId) } },
+        select: { id: true, precioCompra: true },
+      });
+      const costoPorId = new Map(productos.map((p) => [p.id, p.precioCompra]));
+
       for (const item of pedido.items) {
+        const costo = costoPorId.get(item.productoId);
         await this.movimientosService.crearEnTransaccion(tx, empresaId, {
           tipo: TipoMovimiento.SALIDA,
           productoId: item.productoId,
           almacenId: pedido.almacenId,
           cantidad: Number(item.cantidad),
+          costoUnitario: costo != null ? Number(costo) : undefined,
           motivo: `Pedido interno ${pedido.numero}`,
           documento: pedido.numero,
+          // Gestión de Pedidos por Proyecto (2026-09-04) — el consumo real
+          // (esta SALIDA) queda etiquetado con el proyecto del pedido de
+          // origen, si tenía uno asignado. `undefined` cuando no, así el
+          // Movimiento resultante no toca ese campo (queda null).
+          proyectoId: pedido.proyectoId ?? undefined,
+          pedidoInternoId: pedido.id,
         } as any);
       }
 
@@ -283,6 +299,13 @@ export class PedidosInternosService {
     );
   }
 
+  private validarProyecto(empresaId: string, proyectoId: string) {
+    return assertExists(
+      () => this.prisma.withTenant(empresaId, (tx) => tx.proyecto.findFirst({ where: { id: proyectoId, empresaId } })),
+      'El proyecto indicado no existe o no pertenece a esta empresa',
+    );
+  }
+
   private validarProducto(empresaId: string, productoId: string) {
     return assertExists(
       () => this.prisma.withTenant(empresaId, (tx) => tx.producto.findFirst({ where: { id: productoId, empresaId } })),
@@ -296,5 +319,39 @@ export class PedidosInternosService {
       tx.inventario.findMany({ where: { productoId, almacenId } }),
     );
     return calcularDisponibleTotal(filas);
+  }
+
+  /**
+   * Verifica que el almacén del pedido tenga stock suficiente para TODOS sus
+   * ítems — compartido por aprobar() (fail-fast) y entregar() (autoritativo,
+   * ver nota en aprobar()). Junta todos los faltantes antes de lanzar, para
+   * no informar solo el primer producto corto.
+   */
+  private async validarStockDisponible(
+    empresaId: string,
+    pedido: { almacenId: string; items: { productoId: string; cantidad: unknown }[] },
+  ) {
+    const productos = await this.prisma.withTenant(empresaId, (tx) =>
+      tx.producto.findMany({
+        where: { id: { in: pedido.items.map((i) => i.productoId) } },
+        select: { id: true, nombre: true },
+      }),
+    );
+    const nombrePorId = new Map(productos.map((p) => [p.id, p.nombre]));
+
+    const faltantes: string[] = [];
+    for (const item of pedido.items) {
+      const disponible = await this.disponible(empresaId, item.productoId, pedido.almacenId);
+      const requerido = Number(item.cantidad);
+      if (disponible < requerido) {
+        const nombre = nombrePorId.get(item.productoId) ?? item.productoId;
+        faltantes.push(`${nombre}: disponible ${disponible}, se requieren ${requerido}`);
+      }
+    }
+    if (faltantes.length > 0) {
+      throw new BadRequestException(
+        `Stock insuficiente en el almacén para:\n- ${faltantes.join('\n- ')}`,
+      );
+    }
   }
 }

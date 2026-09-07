@@ -54,6 +54,13 @@ export class CreateProformaDto {
   @IsString()
   listaPrecioId?: string;
 
+  /** Fase 10 — Gestión Comercial. Opcional: una proforma puede crearse sin
+   * oportunidad asociada (no todas las cotizaciones nacen de un proceso
+   * comercial formal). */
+  @IsOptional()
+  @IsString()
+  oportunidadId?: string;
+
   @IsArray()
   @ArrayMinSize(1, { message: 'La proforma debe tener al menos un ítem' })
   @ValidateNested({ each: true })

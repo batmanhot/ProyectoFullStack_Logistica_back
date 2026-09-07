@@ -1,12 +1,14 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, UseGuards, UseInterceptors } from '@nestjs/common';
 import { Public } from '../../common/decorators/public.decorator';
 import { PlatformAdminGuard } from '../../common/guards/platform-admin.guard';
+import { PlatformAuditInterceptor } from '../../common/interceptors/platform-audit.interceptor';
 import { AlertasService } from './alertas.service';
 import { CreateReglaAlertaDto } from './dto/create-regla-alerta.dto';
 import { UpdateReglaAlertaDto } from './dto/update-regla-alerta.dto';
 
 @Public()
 @UseGuards(PlatformAdminGuard)
+@UseInterceptors(PlatformAuditInterceptor)
 @Controller('admin/alertas')
 export class AlertasController {
   constructor(private readonly alertasService: AlertasService) {}
@@ -19,6 +21,17 @@ export class AlertasController {
   @Get('vencimientos-proximos')
   vencimientosProximos() {
     return this.alertasService.vencimientosProximos();
+  }
+
+  @Get('envios')
+  historialEnvios() {
+    return this.alertasService.historialEnvios();
+  }
+
+  /** Dispara el envío ahora mismo, sin esperar al cron nocturno — útil para probar o para no perder un día. */
+  @Post('enviar-pendientes')
+  enviarPendientes() {
+    return this.alertasService.enviarAlertasPendientes();
   }
 
   @Get(':id')

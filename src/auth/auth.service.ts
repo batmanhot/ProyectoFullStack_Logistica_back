@@ -3,6 +3,7 @@ import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditoriaService } from '../auditoria/auditoria.service';
+import { fechaVencimientoSuperoGracia } from '../admin/estado-negocio.util';
 
 type UsuarioConRol = {
   id: string;
@@ -67,10 +68,17 @@ export class AuthService {
     if (!empresa || !empresa.activo) {
       throw new UnauthorizedException('Empresa no encontrada o inactiva');
     }
-    if (empresa.estado === 'suspendido' || empresa.estado === 'cancelado') {
+    if (empresa.estado === 'suspendido' || empresa.estado === 'cancelado' || empresa.estado === 'archivado') {
       throw new UnauthorizedException('Esta cuenta está suspendida. Contacta al administrador.');
     }
-    if (empresa.fechaVencimiento && empresa.fechaVencimiento < new Date()) {
+    // Período de gracia (Fase 0 gobierno SuperAdmin, 2026-09-04): antes se
+    // bloqueaba el instante que pasaba fechaVencimiento, sin margen — un pago
+    // real por transferencia/Yape que el PlatformAdmin todavía no concilió a
+    // mano dejaba al cliente afuera aunque sí hubiera pagado. Mismo cálculo
+    // que usa el panel (calcularEstadoEfectivo) para el estado "Gracia", así
+    // el badge que ve el PlatformAdmin y lo que realmente bloquea el login
+    // son SIEMPRE el mismo criterio.
+    if (empresa.fechaVencimiento && fechaVencimientoSuperoGracia(empresa.fechaVencimiento)) {
       throw new UnauthorizedException('El período de prueba o la suscripción de esta empresa venció.');
     }
   }
