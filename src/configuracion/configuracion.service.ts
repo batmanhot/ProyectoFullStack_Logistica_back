@@ -6,6 +6,7 @@ const CAMPOS_PUBLICOS = {
   id: true, nombre: true, ruc: true, contacto: true,
   email: true, telefono: true, direccion: true, plan: true,
   origen: true, modoDesarrollo: true, fechaVencimiento: true, estado: true,
+  formulaValorizacion: true, alertaVencimiento: true,
 };
 
 // Límites que el tenant puede ver de su propio plan — subconjunto de PlanSaaS,

@@ -51,7 +51,8 @@ model Empresa {
   activo              Boolean   @default(true)
   origen              String    @default("admin_saas") // 'demo' | 'admin_saas' — trazabilidad de cómo se creó
   modoDesarrollo      Boolean   @default(false) // switch en Configuración → Sistema: activa accesos rápidos demo en el Login (solo tiene efecto si origen='demo')
-  formulaValorizacion String    @default("PMP") // PMP | FIFO | LIFO — método de valorización de inventario (Configuración → Valorización); ver CapaCosto
+  formulaValorizacion String    @default("PMP") // PMP | FIFO | LIFO — método de valorización de inventario (Configuración → Valorización); aplicado en el Kardex valorizado (lectura), ver CapaCosto para el motor completo
+  alertaVencimiento   Boolean   @default(true) // Configuración → Alertas: si false, no se generan alertas de productos próximos a vencer (las de stock mínimo son siempre activas)
   costeoAutomatico    Boolean   @default(false) // kill-switch de rollout: mientras sea false, ENTRADA/SALIDA usan costoUnitario manual como siempre (sin CapaCosto)
   fechaVencimiento    DateTime? // vencimiento de la suscripción (Fase 7d)
   notas               String? // notas internas del PlatformAdmin (Fase 7d)

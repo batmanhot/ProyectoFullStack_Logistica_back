@@ -39,7 +39,10 @@ describe('MovimientosService', () => {
   let service: MovimientosService;
 
   beforeEach(() => {
-    prisma = { withTenant: vi.fn() };
+    prisma = {
+      withTenant: vi.fn(),
+      empresa: { findUnique: vi.fn().mockResolvedValue({ formulaValorizacion: 'PMP' }) },
+    };
     service = new MovimientosService(prisma);
   });
 
@@ -466,6 +469,47 @@ describe('MovimientosService', () => {
       await service.kardex('e1', 'prod-1', undefined, '2026-01-01', '2026-06-30');
       const callWhere = txMock.movimiento.findMany.mock.calls[0][0].where;
       expect(callWhere).toHaveProperty('fecha');
+    });
+
+    it('valoriza con PMP: costo de salida = promedio ponderado de las entradas', async () => {
+      const movimientos = [
+        { id: 'm1', tipo: 'ENTRADA', cantidad: 10, costoUnitario: 10, almacenId: 'alm-1', almacenDestinoId: null, fecha: new Date('2026-01-01') },
+        { id: 'm2', tipo: 'ENTRADA', cantidad: 10, costoUnitario: 20, almacenId: 'alm-1', almacenDestinoId: null, fecha: new Date('2026-01-02') },
+        { id: 'm3', tipo: 'SALIDA',  cantidad: 5,  costoUnitario: 99, almacenId: 'alm-1', almacenDestinoId: null, fecha: new Date('2026-01-03') },
+      ];
+      const txMock = { movimiento: { findMany: vi.fn().mockResolvedValue(movimientos) } };
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(txMock));
+      const r = await service.kardex('e1', 'prod-1');
+      expect(r[2].formulaValorizacion).toBe('PMP');
+      expect(r[2].costoValorizado).toBe(15);   // (10*10 + 10*20) / 20 = 15, NO el 99 del movimiento
+      expect(r[2].saldoAcumulado).toBe(15);    // 20 - 5
+      expect(r[2].saldoValor).toBe(225);       // 15 unidades * 15 PMP
+    });
+
+    it('valoriza con FIFO cuando la empresa lo tiene configurado', async () => {
+      prisma.empresa.findUnique.mockResolvedValue({ formulaValorizacion: 'FIFO' });
+      const movimientos = [
+        { id: 'm1', tipo: 'ENTRADA', cantidad: 10, costoUnitario: 10, almacenId: 'alm-1', almacenDestinoId: null, fecha: new Date('2026-01-01') },
+        { id: 'm2', tipo: 'ENTRADA', cantidad: 10, costoUnitario: 20, almacenId: 'alm-1', almacenDestinoId: null, fecha: new Date('2026-01-02') },
+        { id: 'm3', tipo: 'SALIDA',  cantidad: 10, costoUnitario: 0,  almacenId: 'alm-1', almacenDestinoId: null, fecha: new Date('2026-01-03') },
+      ];
+      const txMock = { movimiento: { findMany: vi.fn().mockResolvedValue(movimientos) } };
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(txMock));
+      const r = await service.kardex('e1', 'prod-1');
+      expect(r[2].costoValorizado).toBe(10);   // FIFO consume primero el lote de 10 @ 10
+      expect(r[2].saldoValor).toBe(200);       // queda el lote de 10 @ 20
+    });
+
+    it('no rompe si el historial arranca con una salida sin entradas previas (rango de fechas)', async () => {
+      const movimientos = [
+        { id: 'm1', tipo: 'SALIDA', cantidad: 5, costoUnitario: 12, almacenId: 'alm-1', almacenDestinoId: null, fecha: new Date('2026-02-01') },
+      ];
+      const txMock = { movimiento: { findMany: vi.fn().mockResolvedValue(movimientos) } };
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(txMock));
+      const r = await service.kardex('e1', 'prod-1', undefined, '2026-02-01');
+      expect(r).toHaveLength(1);
+      expect(r[0].saldoAcumulado).toBe(-5);
+      expect(r[0].saldoValor).toBe(0);
     });
   });
 });

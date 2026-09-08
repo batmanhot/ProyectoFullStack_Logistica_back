@@ -84,13 +84,18 @@ export class AuthService {
   }
 
   /**
-   * Accesos rápidos de "modo desarrollo" (Configuración → Sistema): solo se
-   * listan si la empresa es de origen demo Y tiene el switch activo — nunca
-   * expone passwordHash, y una empresa real con el switch activo no tiene
-   * ningún efecto porque su origen no es 'demo'.
+   * Accesos rápidos de "modo desarrollo":
+   *  - Fuera de producción (desarrollo local, demo, staging) SIEMPRE se listan
+   *    todos los usuarios activos de la empresa, sin depender del switch por
+   *    empresa — así cualquier entorno que no sea producción tiene las tarjetas
+   *    de acceso rápido según los usuarios que tenga creados.
+   *  - En producción se mantiene el gate estricto: solo empresas de origen
+   *    'demo' con el switch Empresa.modoDesarrollo activo (Configuración → Sistema).
+   * Nunca expone passwordHash.
    */
   private async listarUsuariosDemo(empresa: { id: string; origen: string; modoDesarrollo: boolean }) {
-    if (empresa.origen !== 'demo' || !empresa.modoDesarrollo) return [];
+    const enProduccion = process.env.NODE_ENV === 'production';
+    if (enProduccion && (empresa.origen !== 'demo' || !empresa.modoDesarrollo)) return [];
     return this.prisma.withTenant(empresa.id, (tx) =>
       tx.usuario.findMany({
         where: { empresaId: empresa.id, activo: true },
@@ -134,15 +139,17 @@ export class AuthService {
 
   /**
    * Acceso rápido de "modo desarrollo" — mismo resultado que login() pero sin
-   * password, gateado en el propio backend (no solo en la UI): solo funciona
-   * si la empresa es de origen demo y tiene el switch modoDesarrollo activo.
+   * password, gateado en el propio backend (no solo en la UI):
+   *  - Fuera de producción funciona para cualquier empresa del entorno.
+   *  - En producción está deshabilitado salvo ALLOW_DEMO_LOGIN=true, y aun así
+   *    solo para empresas de origen demo con el switch modoDesarrollo activo.
    */
   async demoLogin(empresaId: string, usuarioId: string) {
+    const enProduccion = process.env.NODE_ENV === 'production';
     // Hallazgo Medio #11 (auditoría 2026-07-29): defensa adicional en
-    // profundidad — si el flag Empresa.modoDesarrollo se activara alguna vez
-    // por error en producción (bug, migración, admin equivocado), esta
-    // compuerta a nivel de entorno sigue bloqueando el acceso sin contraseña.
-    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEMO_LOGIN !== 'true') {
+    // profundidad — en producción el acceso sin contraseña queda bloqueado
+    // salvo que se habilite explícitamente por entorno.
+    if (enProduccion && process.env.ALLOW_DEMO_LOGIN !== 'true') {
       throw new UnauthorizedException('Acceso rápido no disponible');
     }
 
@@ -151,7 +158,9 @@ export class AuthService {
       select: { id: true, activo: true, estado: true, fechaVencimiento: true, origen: true, modoDesarrollo: true },
     });
     this.assertEmpresaAccesible(empresa);
-    if (empresa!.origen !== 'demo' || !empresa!.modoDesarrollo) {
+    // El gate por empresa (origen demo + switch) solo se exige en producción;
+    // fuera de producción cualquier empresa del entorno permite acceso rápido.
+    if (enProduccion && (empresa!.origen !== 'demo' || !empresa!.modoDesarrollo)) {
       throw new UnauthorizedException('Acceso rápido no disponible para esta empresa');
     }
 

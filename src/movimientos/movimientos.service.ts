@@ -9,6 +9,13 @@ import {
   prepararMovimiento,
 } from './stock-impacto.util';
 import { crearCapaEntrada } from './capas-costo.util';
+import {
+  Batch,
+  FormulaValorizacion,
+  procesarSalida,
+  round2,
+  valorarStock,
+} from '../valorizacion/valorizacion.util';
 
 @Injectable()
 export class MovimientosService {
@@ -208,7 +215,23 @@ export class MovimientosService {
     return movimiento;
   }
 
-  /** Kardex — saldo corrido calculado sobre la tabla Movimiento unificada. */
+  /**
+   * Kardex — saldo corrido sobre la tabla Movimiento unificada, con
+   * valorización en lectura (PMP/FIFO/LIFO según Empresa.formulaValorizacion).
+   *
+   * La valorización se reconstruye acá al vuelo desde el historial de
+   * movimientos (no hay tabla de capas persistida en este camino — ese es el
+   * "motor de capas" futuro, ver CapaCosto). Cada entrada de stock aporta un
+   * lote {cantidad, costo} tomado del costoUnitario grabado en su movimiento;
+   * cada salida consume lotes con la fórmula configurada. Es solo lectura:
+   * no altera ningún dato guardado ni el costoUnitario de los movimientos.
+   *
+   * IMPORTANTE: el rango de fechas (desde/hasta) acota qué líneas se
+   * devuelven, pero la reconstrucción de lotes parte del primer movimiento
+   * del período — si se filtra por fecha, el saldo valorizado inicial no
+   * incluye lo anterior al rango (limitación conocida; el motor de capas lo
+   * resuelve). Sin filtro de fecha el kardex es exacto de punta a punta.
+   */
   async kardex(
     empresaId: string,
     productoId: string,
@@ -216,31 +239,76 @@ export class MovimientosService {
     desde?: string,
     hasta?: string,
   ) {
-    const movimientos = await this.prisma.withTenant(empresaId, (tx) =>
-      tx.movimiento.findMany({
-        where: {
-          empresaId,
-          productoId,
-          ...(almacenId && { OR: [{ almacenId }, { almacenDestinoId: almacenId }] }),
-          ...((desde || hasta) && {
-            fecha: {
-              ...(desde && { gte: new Date(desde) }),
-              ...(hasta && { lte: new Date(hasta) }),
-            },
-          }),
-        },
-        orderBy: { fecha: 'asc' },
+    const [movimientos, empresa] = await Promise.all([
+      this.prisma.withTenant(empresaId, (tx) =>
+        tx.movimiento.findMany({
+          where: {
+            empresaId,
+            productoId,
+            ...(almacenId && { OR: [{ almacenId }, { almacenDestinoId: almacenId }] }),
+            ...((desde || hasta) && {
+              fecha: {
+                ...(desde && { gte: new Date(desde) }),
+                ...(hasta && { lte: new Date(hasta) }),
+              },
+            }),
+          },
+          orderBy: { fecha: 'asc' },
+        }),
+      ),
+      this.prisma.empresa.findUnique({
+        where: { id: empresaId },
+        select: { formulaValorizacion: true },
       }),
-    );
+    ]);
 
+    const formula = (empresa?.formulaValorizacion ?? 'PMP') as FormulaValorizacion;
     let saldo = 0;
+    let lotes: Batch[] = [];
+    let ultimoCosto = 0;
+
     return movimientos.map((m) => {
       const cantidad = Number(m.cantidad);
       const delta = almacenId
         ? deltaEnAlmacenDesdeMovimiento(m.tipo, cantidad, m.almacenId, m.almacenDestinoId, almacenId)
         : deltaTotalDesdeMovimiento(m.tipo, cantidad);
       saldo += delta;
-      return { ...m, delta, saldoAcumulado: saldo };
+
+      const costoMovimientoRaw = Number(m.costoUnitario) || 0;
+      let costoValorizado = costoMovimientoRaw;
+
+      if (delta > 0) {
+        // Entrada de stock: nuevo lote al costo grabado en el movimiento.
+        if (costoMovimientoRaw > 0) ultimoCosto = costoMovimientoRaw;
+        lotes.push({ cantidad: delta, costo: costoMovimientoRaw || ultimoCosto, fecha: m.fecha });
+      } else if (delta < 0) {
+        // Salida de stock: consumir lotes con la fórmula configurada.
+        const requerido = -delta;
+        const disponible = lotes.reduce((s, b) => s + b.cantidad, 0);
+        if (disponible < requerido) {
+          // Historial con saldo inicial fuera del rango o entradas sin costo:
+          // se completa el faltante con el último costo conocido para no romper.
+          lotes.push({ cantidad: requerido - disponible, costo: ultimoCosto, fecha: m.fecha });
+        }
+        const res = procesarSalida(lotes, requerido, formula);
+        lotes = res.batches;
+        costoValorizado = res.costoUnitario;
+      }
+
+      const saldoValor = valorarStock(lotes, formula);
+      const costoPromedioSaldo = saldo > 0 ? round2(saldoValor / saldo) : 0;
+
+      return {
+        ...m,
+        delta,
+        saldoAcumulado: saldo,
+        // Valorización en lectura (no persiste; refleja Empresa.formulaValorizacion)
+        formulaValorizacion: formula,
+        costoValorizado, // costo unitario atribuido a esta línea por la fórmula
+        valorMovimiento: round2(costoValorizado * Math.abs(delta)),
+        saldoValor, // valor del stock restante tras esta línea
+        costoPromedioSaldo,
+      };
     });
   }
 
