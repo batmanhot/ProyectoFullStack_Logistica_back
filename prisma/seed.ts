@@ -502,7 +502,9 @@ async function main() {
   const adminPasswordHash = await bcrypt.hash(platformAdminPassword, 12);
   const platformAdmin = await prisma.platformAdmin.upsert({
     where: { email: platformAdminEmail },
-    update: {},
+    // Sincroniza la contraseña en cada corrida: sin esto, cambiar
+    // PLATFORM_ADMIN_PASSWORD y re-seedear no tenía efecto si la fila ya existía.
+    update: { passwordHash: adminPasswordHash, nombre: PLATFORM_ADMIN_DEMO.nombre, activo: true },
     create: {
       email: platformAdminEmail,
       nombre: PLATFORM_ADMIN_DEMO.nombre,
