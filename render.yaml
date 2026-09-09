@@ -96,6 +96,13 @@ services:
       - key: SEED_DEMO_TENANTS
         value: "false"
 
+      # Acceso rápido (login sin contraseña, tarjetas en el Login). En producción
+      # el switch de SuperAdmin → Ajustes solo surte efecto si esto es "true".
+      # En un despliegue de PRUEBAS/DEMO: ponerlo en "true". En producción final:
+      # dejarlo sin definir (o "false") — el toggle queda inerte por diseño.
+      - key: ALLOW_DEMO_LOGIN
+        value: "false"
+
       # ── Web Push (opcional — alertas). Generar el par una vez:
       #    node -e "console.log(require('web-push').generateVAPIDKeys())"
       #    VAPID_PUBLIC_KEY debe coincidir con VITE_VAPID_PUBLIC_KEY del frontend.

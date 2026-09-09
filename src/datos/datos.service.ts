@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
@@ -7,16 +7,26 @@ import { PrismaService } from '../prisma/prisma.service';
 // porque seed.ts es un script standalone, no un módulo importable por Nest.
 const DEMO_PASSWORD = 'StockPro2026!';
 
+// La Postgres free de Render es lenta y agrega latencia app→BD. `maxWait` alto
+// para conseguir conexión del pool bajo carga (default 2s se queda corto);
+// `timeout` alto para los lotes grandes de escritura de la re-siembra.
+const TXN_OPTS = { timeout: 120_000, maxWait: 30_000 } as const;
+
 @Injectable()
 export class DatosService {
+  private readonly logger = new Logger('DatosService');
+
   constructor(private readonly prisma: PrismaService) {}
 
   // ── Limpiar datos operativos ────────────────────────────────────────────────
   // Elimina todo lo transaccional pero conserva: Empresa, Categoria, Almacen,
   // Ubicacion, AreaInterna, Usuario, Rol, Permiso.
   async limpiarOperativos(empresaId: string) {
-    // ~25 deleteMany secuenciales — el timeout default de Prisma (5s) no alcanza.
-    await this.prisma.withTenant(empresaId, (tx) => this.borrarOperativos(tx, empresaId), { timeout: 30000 });
+    try {
+      await this.borrarOperativos(empresaId, { incluirCatalogos: false });
+    } catch (e) {
+      this.rethrow('Limpiar datos operativos', e);
+    }
     return { ok: true, mensaje: 'Datos operativos eliminados correctamente' };
   }
 
@@ -24,16 +34,47 @@ export class DatosService {
   // 1) Limpia TODO (incluyendo categorias, almacenes, areas, ubicaciones)
   // 2) Re-siembra datos demo listos para presentación
   async restaurarDemo(empresaId: string) {
-    await this.prisma.withTenant(empresaId, async (tx) => {
-      await this.borrarOperativos(tx, empresaId);
-      // Estructura de catálogos también
-      await tx.ubicacion.deleteMany({ where: { almacen: { empresaId } } });
-      await tx.areaInterna.deleteMany({ where: { empresaId } });
-      await tx.almacen.deleteMany({ where: { empresaId } });
-      await tx.categoria.deleteMany({ where: { empresaId } });
-    }, { timeout: 30000 });
-    await this.sembrarDemo(empresaId);
+    try {
+      await this.borrarOperativos(empresaId, { incluirCatalogos: true });
+    } catch (e) {
+      this.rethrow('Borrado previo a restaurar demo', e);
+    }
+    try {
+      await this.sembrarDemo(empresaId);
+    } catch (e) {
+      // El borrado ya se completó — se avisa explícitamente para que el usuario
+      // sepa que la empresa quedó vacía y puede reintentar solo la siembra.
+      this.rethrow('Re-siembra de datos demo (el borrado sí se completó)', e);
+    }
     return { ok: true, mensaje: 'Datos demo restaurados correctamente' };
+  }
+
+  /**
+   * Eleva el error real (código Prisma + mensaje) a una HttpException para que
+   * llegue al cliente en vez del genérico "Error interno del servidor". La
+   * acción es admin-only (@Permiso('configuracion')), así que exponer el
+   * detalle es aceptable y necesario para diagnosticar en Render.
+   */
+  private rethrow(accion: string, e: unknown): never {
+    const msg = e instanceof Error ? e.message : String(e);
+    const code = (e as { code?: string })?.code;
+    this.logger.error(`${accion} falló${code ? ` [${code}]` : ''}: ${msg}`, e instanceof Error ? e.stack : undefined);
+    throw new InternalServerErrorException(`${accion} falló${code ? ` [${code}]` : ''}: ${msg}`);
+  }
+
+  // ── Borrado por niveles ────────────────────────────────────────────────────
+  // Antes: una sola transacción interactiva de ~45 deleteMany. Sobre la
+  // Postgres lenta de Render eso agotaba el timeout / no conseguía conexión.
+  // Ahora: una transacción corta por nivel de dependencia FK (cada una fija su
+  // propio contexto de tenant via withTenant). El orden ENTRE niveles se
+  // mantiene porque cada withTenant hace commit antes del siguiente.
+  private async borrarOperativos(empresaId: string, opts: { incluirCatalogos: boolean }) {
+    await this.prisma.withTenant(empresaId, (tx) => this.borrarNivel1(tx, empresaId), TXN_OPTS);
+    await this.prisma.withTenant(empresaId, (tx) => this.borrarNivel2(tx, empresaId), TXN_OPTS);
+    await this.prisma.withTenant(empresaId, (tx) => this.borrarNivel3(tx, empresaId), TXN_OPTS);
+    if (opts.incluirCatalogos) {
+      await this.prisma.withTenant(empresaId, (tx) => this.borrarCatalogos(tx, empresaId), TXN_OPTS);
+    }
   }
 
   // ── Dispatcher de siembra ────────────────────────────────────────────────
@@ -46,12 +87,12 @@ export class DatosService {
       const empresa = await tx.empresa.findUnique({ where: { id: empresaId } });
       if (empresa?.codigo === 'dlnorte') await this.sembrarDlNorte(tx, empresaId);
       else await this.sembrarBasico(tx, empresaId);
-    }, { timeout: 30000 });
+    }, TXN_OPTS);
   }
 
-  // ── Borrado operativo compartido ────────────────────────────────────────────
-  private async borrarOperativos(tx: PrismaClient, empresaId: string) {
-    // Nivel 1 — tablas hijo sin empresaId propio (orden crítico por FKs)
+  // ── Borrado operativo — Nivel 1: tablas hijo sin empresaId propio ──────────
+  private async borrarNivel1(tx: PrismaClient, empresaId: string) {
+    // Orden crítico por FKs
     await tx.pagoCxC.deleteMany({ where: { cuenta: { empresaId } } });
     await tx.pedidoPortalItem.deleteMany({ where: { pedidoPortal: { empresaId } } });
     await tx.proformaItem.deleteMany({ where: { proforma: { empresaId } } });
@@ -68,8 +109,10 @@ export class DatosService {
     // DespachoItem / Empaque: CASCADE desde Despacho; borrado explícito por orden con Producto
     await tx.despachoItem.deleteMany({ where: { despacho: { empresaId } } });
     await tx.empaque.deleteMany({ where: { despacho: { empresaId } } });
+  }
 
-    // Nivel 2 — cabeceras con empresaId
+  // ── Borrado operativo — Nivel 2: cabeceras con empresaId ──────────────────
+  private async borrarNivel2(tx: PrismaClient, empresaId: string) {
     await tx.cuentaPorCobrar.deleteMany({ where: { empresaId } });
     await tx.pedidoPortal.deleteMany({ where: { empresaId } });
     await tx.proforma.deleteMany({ where: { empresaId } });
@@ -82,8 +125,10 @@ export class DatosService {
     await tx.despacho.deleteMany({ where: { empresaId } });
     await tx.ordenCompra.deleteMany({ where: { empresaId } });
     await tx.vehiculoFlota.deleteMany({ where: { empresaId } });
+  }
 
-    // Nivel 3 — maestros operativos
+  // ── Borrado operativo — Nivel 3: maestros operativos ──────────────────────
+  private async borrarNivel3(tx: PrismaClient, empresaId: string) {
     // CapaCosto/CapaCostoConsumo (costeo PEPS, gateado por Empresa.costeoAutomatico)
     // referencian Movimiento/Producto/LoteProducto SIN onDelete: Cascade en el
     // schema — hay que vaciarlas antes o el borrado de abajo viola la FK (bug
@@ -114,6 +159,14 @@ export class DatosService {
     // ListaPicking/LineaPicking no necesitan deleteMany propio: cascadean
     // desde Despacho (onDelete: Cascade), ya borrado en el Nivel 2 de arriba.
     await tx.registroIncidencia.deleteMany({ where: { empresaId } });
+  }
+
+  // ── Borrado — Catálogos (solo en restaurarDemo, tras los 3 niveles) ───────
+  private async borrarCatalogos(tx: PrismaClient, empresaId: string) {
+    await tx.ubicacion.deleteMany({ where: { almacen: { empresaId } } });
+    await tx.areaInterna.deleteMany({ where: { empresaId } });
+    await tx.almacen.deleteMany({ where: { empresaId } });
+    await tx.categoria.deleteMany({ where: { empresaId } });
   }
 
   // ── Seed de datos demo — dataset mínimo (cualquier tenant que no sea dlnorte) ──

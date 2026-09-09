@@ -25,11 +25,6 @@ export class UpdateConfiguracionDto {
   @MaxLength(300)
   direccion?: string;
 
-  /** Switch de Configuración → Sistema. Solo tiene efecto visible si origen='demo'. */
-  @IsOptional()
-  @IsBoolean()
-  modoDesarrollo?: boolean;
-
   /** Método de valorización de inventario (Configuración → Valorización). Aplicado en el Kardex valorizado. */
   @IsOptional()
   @IsIn(['PMP', 'FIFO', 'LIFO'])

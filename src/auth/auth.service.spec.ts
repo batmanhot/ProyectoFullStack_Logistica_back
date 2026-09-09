@@ -13,6 +13,9 @@ describe('AuthService', () => {
     prismaMock = {
       empresa: { findUnique: vi.fn() },
       withTenant: vi.fn(),
+      // Por defecto el acceso rápido está APAGADO (switch de plataforma en false);
+      // los tests que lo necesitan lo prenden explícitamente.
+      plataformaConfig: { findFirst: vi.fn().mockResolvedValue({ accesoRapidoTarjetas: false }) },
     };
     jwtMock = {
       signAsync: vi.fn().mockResolvedValue('token-firmado'),
@@ -71,7 +74,7 @@ describe('AuthService', () => {
     it('permite el acceso si el trial todavía no vence', async () => {
       const fechaFutura = new Date(Date.now() + 30 * 86_400_000);
       prismaMock.empresa.findUnique.mockResolvedValue({
-        id: '1', activo: true, estado: 'trial', fechaVencimiento: fechaFutura, origen: 'admin_saas', modoDesarrollo: false,
+        id: '1', activo: true, estado: 'trial', fechaVencimiento: fechaFutura, origen: 'admin_saas',
       });
       await expect(service.buscarEmpresaPorCodigo('dlnorte')).resolves.toMatchObject({ id: '1' });
     });
@@ -79,7 +82,7 @@ describe('AuthService', () => {
     it('permite el acceso dentro del período de gracia (venció hace 2 días, gracia = 5)', async () => {
       const hace2dias = new Date(Date.now() - 2 * 86_400_000);
       prismaMock.empresa.findUnique.mockResolvedValue({
-        id: '1', activo: true, estado: 'activo', fechaVencimiento: hace2dias, origen: 'admin_saas', modoDesarrollo: false,
+        id: '1', activo: true, estado: 'activo', fechaVencimiento: hace2dias, origen: 'admin_saas',
       });
       await expect(service.buscarEmpresaPorCodigo('dlnorte')).resolves.toMatchObject({ id: '1' });
     });
@@ -97,51 +100,61 @@ describe('AuthService', () => {
       await expect(service.buscarEmpresaPorCodigo('dlnorte')).rejects.toThrow(UnauthorizedException);
     });
 
-    describe('usuariosDemo — en producción se mantiene el gate estricto', () => {
+    describe('usuariosDemo — controlado por el switch de plataforma', () => {
       const NODE_ENV_ORIG = process.env.NODE_ENV;
-      beforeEach(() => { process.env.NODE_ENV = 'production'; });
-      afterEach(() => { process.env.NODE_ENV = NODE_ENV_ORIG; });
-
-      it('no incluye usuariosDemo si la empresa no es de origen demo, aunque modoDesarrollo esté activo', async () => {
-        prismaMock.empresa.findUnique.mockResolvedValue({
-          id: '1', activo: true, codigo: 'real', origen: 'admin_saas', modoDesarrollo: true,
-        });
-        const r = await service.buscarEmpresaPorCodigo('real');
-        expect(r.usuariosDemo).toEqual([]);
-        expect(prismaMock.withTenant).not.toHaveBeenCalled();
+      const ALLOW_ORIG = process.env.ALLOW_DEMO_LOGIN;
+      const usuarios = [{ id: 'u1', nombre: 'Admin', email: 'admin@x.pe', rol: { codigo: 'admin', label: 'Administrador' } }];
+      afterEach(() => {
+        process.env.NODE_ENV = NODE_ENV_ORIG;
+        if (ALLOW_ORIG === undefined) delete process.env.ALLOW_DEMO_LOGIN;
+        else process.env.ALLOW_DEMO_LOGIN = ALLOW_ORIG;
       });
 
-      it('no incluye usuariosDemo si la empresa es demo pero modoDesarrollo está apagado', async () => {
-        prismaMock.empresa.findUnique.mockResolvedValue({
-          id: '1', activo: true, codigo: 'dlnorte', origen: 'demo', modoDesarrollo: false,
-        });
-        const r = await service.buscarEmpresaPorCodigo('dlnorte');
-        expect(r.usuariosDemo).toEqual([]);
-        expect(prismaMock.withTenant).not.toHaveBeenCalled();
-      });
-
-      it('incluye usuariosDemo (por rol, sin passwordHash) si es demo y modoDesarrollo está activo', async () => {
-        prismaMock.empresa.findUnique.mockResolvedValue({
-          id: '1', activo: true, codigo: 'dlnorte', origen: 'demo', modoDesarrollo: true,
-        });
-        const usuarios = [{ id: 'u1', nombre: 'Admin', email: 'admin@dlnorte.demo', rol: { codigo: 'admin', label: 'Administrador' } }];
+      it('lista todos los usuarios activos si el switch de plataforma está ON', async () => {
+        prismaMock.plataformaConfig.findFirst.mockResolvedValue({ accesoRapidoTarjetas: true });
+        prismaMock.empresa.findUnique.mockResolvedValue({ id: '1', activo: true, codigo: 'carbolec', origen: 'admin_saas' });
         prismaMock.withTenant.mockResolvedValue(usuarios);
-        const r = await service.buscarEmpresaPorCodigo('dlnorte');
+        const r = await service.buscarEmpresaPorCodigo('carbolec');
         expect(r.usuariosDemo).toEqual(usuarios);
         expect(prismaMock.withTenant).toHaveBeenCalledWith('1', expect.any(Function));
       });
-    });
 
-    it('fuera de producción incluye usuariosDemo aunque no sea demo y el switch esté apagado', async () => {
-      // NODE_ENV = 'test' bajo vitest → entorno no-producción
-      prismaMock.empresa.findUnique.mockResolvedValue({
-        id: '1', activo: true, codigo: 'real', origen: 'admin_saas', modoDesarrollo: false,
+      it('devuelve [] si el switch de plataforma está OFF', async () => {
+        prismaMock.plataformaConfig.findFirst.mockResolvedValue({ accesoRapidoTarjetas: false });
+        prismaMock.empresa.findUnique.mockResolvedValue({ id: '1', activo: true, codigo: 'carbolec', origen: 'demo' });
+        const r = await service.buscarEmpresaPorCodigo('carbolec');
+        expect(r.usuariosDemo).toEqual([]);
+        expect(prismaMock.withTenant).not.toHaveBeenCalled();
       });
-      const usuarios = [{ id: 'u1', nombre: 'Admin', email: 'admin@real.pe', rol: { codigo: 'admin', label: 'Administrador' } }];
-      prismaMock.withTenant.mockResolvedValue(usuarios);
-      const r = await service.buscarEmpresaPorCodigo('real');
-      expect(r.usuariosDemo).toEqual(usuarios);
-      expect(prismaMock.withTenant).toHaveBeenCalledWith('1', expect.any(Function));
+
+      it('sin fila de config: ON fuera de producción', async () => {
+        process.env.NODE_ENV = 'test';
+        prismaMock.plataformaConfig.findFirst.mockResolvedValue(null);
+        prismaMock.empresa.findUnique.mockResolvedValue({ id: '1', activo: true, codigo: 'x', origen: 'admin_saas' });
+        prismaMock.withTenant.mockResolvedValue(usuarios);
+        const r = await service.buscarEmpresaPorCodigo('x');
+        expect(r.usuariosDemo).toEqual(usuarios);
+      });
+
+      it('candado de entorno: [] en producción sin ALLOW_DEMO_LOGIN aunque el switch esté ON', async () => {
+        process.env.NODE_ENV = 'production';
+        delete process.env.ALLOW_DEMO_LOGIN;
+        prismaMock.plataformaConfig.findFirst.mockResolvedValue({ accesoRapidoTarjetas: true });
+        prismaMock.empresa.findUnique.mockResolvedValue({ id: '1', activo: true, codigo: 'x', origen: 'demo' });
+        const r = await service.buscarEmpresaPorCodigo('x');
+        expect(r.usuariosDemo).toEqual([]);
+        expect(prismaMock.withTenant).not.toHaveBeenCalled();
+      });
+
+      it('en producción con ALLOW_DEMO_LOGIN=true y switch ON: lista', async () => {
+        process.env.NODE_ENV = 'production';
+        process.env.ALLOW_DEMO_LOGIN = 'true';
+        prismaMock.plataformaConfig.findFirst.mockResolvedValue({ accesoRapidoTarjetas: true });
+        prismaMock.empresa.findUnique.mockResolvedValue({ id: '1', activo: true, codigo: 'x', origen: 'admin_saas' });
+        prismaMock.withTenant.mockResolvedValue(usuarios);
+        const r = await service.buscarEmpresaPorCodigo('x');
+        expect(r.usuariosDemo).toEqual(usuarios);
+      });
     });
   });
 
@@ -209,7 +222,7 @@ describe('AuthService', () => {
     });
   });
 
-  describe('demoLogin — acceso rápido de modo desarrollo', () => {
+  describe('demoLogin — acceso rápido (login sin contraseña)', () => {
     const usuarioBase = {
       id: 'u1',
       empresaId: 'e1',
@@ -221,19 +234,30 @@ describe('AuthService', () => {
       rol: { codigo: 'admin', label: 'Administrador', permisos: [{ modulo: '*' }] },
     };
 
+    beforeEach(() => {
+      // Switch de plataforma ON por default en este describe.
+      prismaMock.plataformaConfig.findFirst.mockResolvedValue({ accesoRapidoTarjetas: true });
+    });
+
+    it('lanza Unauthorized si el switch de plataforma está OFF', async () => {
+      prismaMock.plataformaConfig.findFirst.mockResolvedValue({ accesoRapidoTarjetas: false });
+      await expect(service.demoLogin('e1', 'u1')).rejects.toThrow(UnauthorizedException);
+      expect(prismaMock.empresa.findUnique).not.toHaveBeenCalled();
+    });
+
     it('lanza Unauthorized si la empresa no existe', async () => {
       prismaMock.empresa.findUnique.mockResolvedValue(null);
       await expect(service.demoLogin('e1', 'u1')).rejects.toThrow(UnauthorizedException);
     });
 
     it('lanza Unauthorized si el usuario no existe', async () => {
-      prismaMock.empresa.findUnique.mockResolvedValue({ id: 'e1', activo: true, origen: 'demo', modoDesarrollo: true });
+      prismaMock.empresa.findUnique.mockResolvedValue({ id: 'e1', activo: true });
       prismaMock.withTenant.mockResolvedValue(null);
       await expect(service.demoLogin('e1', 'u1')).rejects.toThrow(UnauthorizedException);
     });
 
-    it('fuera de producción emite tokens sin password aunque la empresa no sea demo ni tenga el switch', async () => {
-      prismaMock.empresa.findUnique.mockResolvedValue({ id: 'e1', activo: true, origen: 'admin_saas', modoDesarrollo: false });
+    it('emite tokens sin password para cualquier empresa cuando el switch está ON', async () => {
+      prismaMock.empresa.findUnique.mockResolvedValue({ id: 'e1', activo: true, origen: 'admin_saas' });
       prismaMock.withTenant.mockResolvedValue(usuarioBase);
 
       const resultado = await service.demoLogin('e1', 'u1');
@@ -243,15 +267,14 @@ describe('AuthService', () => {
       expect(resultado.usuario.email).toBe('admin@dlnorte.demo');
     });
 
-    it('lanza Unauthorized si el trial de la empresa venció', async () => {
+    it('lanza Unauthorized si el trial de la empresa venció (aunque el switch esté ON)', async () => {
       prismaMock.empresa.findUnique.mockResolvedValue({
         id: 'e1', activo: true, estado: 'trial', fechaVencimiento: new Date('2020-01-01'),
-        origen: 'demo', modoDesarrollo: true,
       });
       await expect(service.demoLogin('e1', 'u1')).rejects.toThrow(UnauthorizedException);
     });
 
-    describe('en producción', () => {
+    describe('candado de entorno (producción)', () => {
       const NODE_ENV_ORIG = process.env.NODE_ENV;
       const ALLOW_ORIG = process.env.ALLOW_DEMO_LOGIN;
       beforeEach(() => { process.env.NODE_ENV = 'production'; });
@@ -261,27 +284,15 @@ describe('AuthService', () => {
         else process.env.ALLOW_DEMO_LOGIN = ALLOW_ORIG;
       });
 
-      it('lanza Unauthorized si ALLOW_DEMO_LOGIN no está habilitado', async () => {
+      it('bloquea aunque el switch esté ON si no hay ALLOW_DEMO_LOGIN=true', async () => {
         delete process.env.ALLOW_DEMO_LOGIN;
-        prismaMock.empresa.findUnique.mockResolvedValue({ id: 'e1', activo: true, origen: 'demo', modoDesarrollo: true });
+        prismaMock.empresa.findUnique.mockResolvedValue({ id: 'e1', activo: true });
         await expect(service.demoLogin('e1', 'u1')).rejects.toThrow(UnauthorizedException);
       });
 
-      it('con ALLOW_DEMO_LOGIN=true, lanza Unauthorized si la empresa no es de origen demo', async () => {
+      it('con ALLOW_DEMO_LOGIN=true y switch ON: emite tokens sin password', async () => {
         process.env.ALLOW_DEMO_LOGIN = 'true';
-        prismaMock.empresa.findUnique.mockResolvedValue({ id: 'e1', activo: true, origen: 'admin_saas', modoDesarrollo: true });
-        await expect(service.demoLogin('e1', 'u1')).rejects.toThrow(UnauthorizedException);
-      });
-
-      it('con ALLOW_DEMO_LOGIN=true, lanza Unauthorized si modoDesarrollo está apagado', async () => {
-        process.env.ALLOW_DEMO_LOGIN = 'true';
-        prismaMock.empresa.findUnique.mockResolvedValue({ id: 'e1', activo: true, origen: 'demo', modoDesarrollo: false });
-        await expect(service.demoLogin('e1', 'u1')).rejects.toThrow(UnauthorizedException);
-      });
-
-      it('con ALLOW_DEMO_LOGIN=true y empresa demo con el switch activo, emite tokens sin password', async () => {
-        process.env.ALLOW_DEMO_LOGIN = 'true';
-        prismaMock.empresa.findUnique.mockResolvedValue({ id: 'e1', activo: true, origen: 'demo', modoDesarrollo: true });
+        prismaMock.empresa.findUnique.mockResolvedValue({ id: 'e1', activo: true, origen: 'admin_saas' });
         prismaMock.withTenant.mockResolvedValue(usuarioBase);
 
         const resultado = await service.demoLogin('e1', 'u1');

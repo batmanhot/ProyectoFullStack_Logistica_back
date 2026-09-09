@@ -33,11 +33,13 @@ describe('DatosService', () => {
   });
 
   describe('limpiarOperativos', () => {
-    it('abre la transacción con timeout de 30s (~25 deleteMany secuenciales, el default de 5s no alcanza)', async () => {
+    it('borra por niveles: varias transacciones cortas con timeout/maxWait altos (BD lenta de Render)', async () => {
       const tx = crearTxMock();
       prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(tx));
       await service.limpiarOperativos('e1');
-      expect(prisma.withTenant).toHaveBeenCalledWith('e1', expect.any(Function), { timeout: 30000 });
+      // Una transacción por nivel de dependencia FK (no una sola gigante).
+      expect(prisma.withTenant.mock.calls.length).toBeGreaterThanOrEqual(3);
+      expect(prisma.withTenant).toHaveBeenCalledWith('e1', expect.any(Function), expect.objectContaining({ timeout: 120_000, maxWait: 30_000 }));
     });
 
     it('borra pagoCxC antes que cuentaPorCobrar (FK de pago hacia la cuenta)', async () => {

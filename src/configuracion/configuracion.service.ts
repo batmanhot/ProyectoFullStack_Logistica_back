@@ -5,7 +5,7 @@ import { UpdateConfiguracionDto } from './dto/update-configuracion.dto';
 const CAMPOS_PUBLICOS = {
   id: true, nombre: true, ruc: true, contacto: true,
   email: true, telefono: true, direccion: true, plan: true,
-  origen: true, modoDesarrollo: true, fechaVencimiento: true, estado: true,
+  origen: true, fechaVencimiento: true, estado: true,
   formulaValorizacion: true, alertaVencimiento: true,
 };
 

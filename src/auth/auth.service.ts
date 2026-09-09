@@ -4,6 +4,7 @@ import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditoriaService } from '../auditoria/auditoria.service';
 import { fechaVencimientoSuperoGracia } from '../admin/estado-negocio.util';
+import { entornoBloqueaAccesoRapido } from '../common/acceso-rapido.util';
 
 type UsuarioConRol = {
   id: string;
@@ -44,14 +45,28 @@ export class AuthService {
         estado: true,
         activo: true,
         origen: true,
-        modoDesarrollo: true,
         fechaVencimiento: true,
       },
     });
 
     this.assertEmpresaAccesible(empresa);
 
-    return { ...empresa, usuariosDemo: await this.listarUsuariosDemo(empresa!) };
+    return { ...empresa, usuariosDemo: await this.listarUsuariosDemo(empresa!.id) };
+  }
+
+  /**
+   * ¿El acceso rápido (login sin contraseña) está activo ahora mismo?
+   * Un solo switch a nivel plataforma (SuperAdmin → Ajustes) + candado de
+   * entorno en producción. Sin fila de config todavía: ON fuera de producción
+   * (comodidad de dev), OFF en producción hasta que el SuperAdmin lo active.
+   */
+  private async accesoRapidoActivo(): Promise<boolean> {
+    if (entornoBloqueaAccesoRapido()) return false;
+    const cfg = await this.prisma.plataformaConfig.findFirst({
+      select: { accesoRapidoTarjetas: true },
+    });
+    if (!cfg) return process.env.NODE_ENV !== 'production';
+    return cfg.accesoRapidoTarjetas;
   }
 
   /**
@@ -84,21 +99,15 @@ export class AuthService {
   }
 
   /**
-   * Accesos rápidos de "modo desarrollo":
-   *  - Fuera de producción (desarrollo local, demo, staging) SIEMPRE se listan
-   *    todos los usuarios activos de la empresa, sin depender del switch por
-   *    empresa — así cualquier entorno que no sea producción tiene las tarjetas
-   *    de acceso rápido según los usuarios que tenga creados.
-   *  - En producción se mantiene el gate estricto: solo empresas de origen
-   *    'demo' con el switch Empresa.modoDesarrollo activo (Configuración → Sistema).
-   * Nunca expone passwordHash.
+   * Tarjetas de acceso rápido del Login: todos los usuarios activos de la
+   * empresa (uno por rol), sin passwordHash. Se listan solo si el acceso
+   * rápido está activo a nivel plataforma (ver accesoRapidoActivo()).
    */
-  private async listarUsuariosDemo(empresa: { id: string; origen: string; modoDesarrollo: boolean }) {
-    const enProduccion = process.env.NODE_ENV === 'production';
-    if (enProduccion && (empresa.origen !== 'demo' || !empresa.modoDesarrollo)) return [];
-    return this.prisma.withTenant(empresa.id, (tx) =>
+  private async listarUsuariosDemo(empresaId: string) {
+    if (!(await this.accesoRapidoActivo())) return [];
+    return this.prisma.withTenant(empresaId, (tx) =>
       tx.usuario.findMany({
-        where: { empresaId: empresa.id, activo: true },
+        where: { empresaId, activo: true },
         select: { id: true, nombre: true, email: true, rol: { select: { codigo: true, label: true } } },
         orderBy: { createdAt: 'asc' },
       }),
@@ -138,31 +147,21 @@ export class AuthService {
   }
 
   /**
-   * Acceso rápido de "modo desarrollo" — mismo resultado que login() pero sin
-   * password, gateado en el propio backend (no solo en la UI):
-   *  - Fuera de producción funciona para cualquier empresa del entorno.
-   *  - En producción está deshabilitado salvo ALLOW_DEMO_LOGIN=true, y aun así
-   *    solo para empresas de origen demo con el switch modoDesarrollo activo.
+   * Acceso rápido — mismo resultado que login() pero sin password, gateado en
+   * el backend (no solo en la UI) por el switch de plataforma + candado de
+   * entorno. assertEmpresaAccesible() sigue aplicando (trial vencido, negocio
+   * suspendido) en todos los entornos.
    */
   async demoLogin(empresaId: string, usuarioId: string) {
-    const enProduccion = process.env.NODE_ENV === 'production';
-    // Hallazgo Medio #11 (auditoría 2026-07-29): defensa adicional en
-    // profundidad — en producción el acceso sin contraseña queda bloqueado
-    // salvo que se habilite explícitamente por entorno.
-    if (enProduccion && process.env.ALLOW_DEMO_LOGIN !== 'true') {
+    if (!(await this.accesoRapidoActivo())) {
       throw new UnauthorizedException('Acceso rápido no disponible');
     }
 
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: empresaId },
-      select: { id: true, activo: true, estado: true, fechaVencimiento: true, origen: true, modoDesarrollo: true },
+      select: { id: true, activo: true, estado: true, fechaVencimiento: true },
     });
     this.assertEmpresaAccesible(empresa);
-    // El gate por empresa (origen demo + switch) solo se exige en producción;
-    // fuera de producción cualquier empresa del entorno permite acceso rápido.
-    if (enProduccion && (empresa!.origen !== 'demo' || !empresa!.modoDesarrollo)) {
-      throw new UnauthorizedException('Acceso rápido no disponible para esta empresa');
-    }
 
     const usuario = (await this.prisma.withTenant(empresaId, (tx) =>
       tx.usuario.findUnique({

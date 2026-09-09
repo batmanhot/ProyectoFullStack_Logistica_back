@@ -36,6 +36,7 @@ import { PlanesModule } from './admin/planes/planes.module';
 import { RenovacionesModule } from './admin/renovaciones/renovaciones.module';
 import { AlertasModule } from './admin/alertas/alertas.module';
 import { LandingModule } from './admin/landing/landing.module';
+import { PlataformaConfigModule } from './admin/plataforma-config/plataforma-config.module';
 import { AuditoriaPlataformaModule } from './admin/auditoria/auditoria-plataforma.module';
 import { PlatformAdminsModule } from './admin/platform-admins/platform-admins.module';
 import { RolesBaseModule } from './admin/roles-base/roles-base.module';
@@ -111,6 +112,7 @@ import { ProyectosModule } from './proyectos/proyectos.module';
     RenovacionesModule,
     AlertasModule,
     LandingModule,
+    PlataformaConfigModule,
     AuditoriaPlataformaModule,
     PlatformAdminsModule,
     RolesBaseModule,

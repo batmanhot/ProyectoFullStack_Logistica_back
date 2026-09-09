@@ -444,7 +444,7 @@ async function main() {
   for (const e of sembrarDemo ? EMPRESAS_DEMO : []) {
     let empresa = await prisma.empresa.upsert({
       where: { codigo: e.codigo },
-      update: { modoDesarrollo: true },
+      update: {},
       create: {
         codigo: e.codigo,
         nombre: e.nombre,
@@ -452,7 +452,6 @@ async function main() {
         email: e.email,
         origen: e.origen,
         plan: e.plan,
-        modoDesarrollo: true, // permite las tarjetas de acceso rápido del Login mientras el proyecto está en desarrollo
       },
     });
 
@@ -542,6 +541,18 @@ async function main() {
   // que el SuperAdmin ya haya completado a mano desde el panel en una corrida
   // posterior del seed, pero sí corrige el registro mínimo/de prueba que
   // quedó de Fase 7d (solo `hero.titulo` + `sitio.nombre`).
+  // Configuración de plataforma (singleton) — el switch de tarjetas de acceso
+  // rápido del Login. Se crea si no existe: ON en entornos de desarrollo/demo
+  // (SEED_DEMO_TENANTS != false), OFF en un despliegue real. Si ya existe, se
+  // respeta lo que el SuperAdmin haya dejado configurado.
+  const plataformaConfigExistente = await prisma.plataformaConfig.findFirst();
+  if (!plataformaConfigExistente) {
+    await prisma.plataformaConfig.create({ data: { accesoRapidoTarjetas: sembrarDemo } });
+    console.log(`  ✓ PlataformaConfig: accesoRapidoTarjetas=${sembrarDemo}`);
+  } else {
+    console.log('  · PlataformaConfig: ya existe, no se sobrescribe');
+  }
+
   const landingExistente = await prisma.landingConfig.findFirst();
   const landingData = landingExistente?.data as Record<string, any> | undefined;
   const landingIncompleta =

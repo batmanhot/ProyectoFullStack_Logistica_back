@@ -50,7 +50,6 @@ model Empresa {
   estado              String    @default("activo")
   activo              Boolean   @default(true)
   origen              String    @default("admin_saas") // 'demo' | 'admin_saas' — trazabilidad de cómo se creó
-  modoDesarrollo      Boolean   @default(false) // switch en Configuración → Sistema: activa accesos rápidos demo en el Login (solo tiene efecto si origen='demo')
   formulaValorizacion String    @default("PMP") // PMP | FIFO | LIFO — método de valorización de inventario (Configuración → Valorización); aplicado en el Kardex valorizado (lectura), ver CapaCosto para el motor completo
   alertaVencimiento   Boolean   @default(true) // Configuración → Alertas: si false, no se generan alertas de productos próximos a vencer (las de stock mínimo son siempre activas)
   costeoAutomatico    Boolean   @default(false) // kill-switch de rollout: mientras sea false, ENTRADA/SALIDA usan costoUnitario manual como siempre (sin CapaCosto)
@@ -1608,6 +1607,22 @@ model LandingConfig {
   updatedAt DateTime @updatedAt
 
   @@map("landing_config")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Configuración global de la plataforma (singleton, editada desde el
+// panel SuperAdmin). A diferencia de LandingConfig (contenido de
+// marketing), acá viven flags operativos que afectan a todos los tenants.
+// ─────────────────────────────────────────────────────────────────
+model PlataformaConfig {
+  id                   String   @id @default(cuid())
+  // SuperAdmin → Ajustes: muestra las tarjetas de acceso rápido (login sin
+  // contraseña, un usuario por rol) en el Login para TODOS los negocios.
+  // En producción solo surte efecto si el despliegue trae ALLOW_DEMO_LOGIN=true.
+  accesoRapidoTarjetas Boolean  @default(false)
+  updatedAt            DateTime @updatedAt
+
+  @@map("plataforma_config")
 }
 
 // ─────────────────────────────────────────────────────────────────
