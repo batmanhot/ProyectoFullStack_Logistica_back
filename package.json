@@ -15,6 +15,7 @@
     "migrate:deploy": "prisma migrate deploy",
     "db:app-role": "ts-node prisma/create-app-role.ts",
     "db:setup-prod": "prisma migrate deploy && ts-node prisma/create-app-role.ts && ts-node prisma/seed.ts",
+    "bootstrap:render": "node scripts/bootstrap-render.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",

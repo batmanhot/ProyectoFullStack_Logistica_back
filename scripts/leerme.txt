@@ -1,0 +1,59 @@
+## DEPLOYAR NUEVAMENTE CUANDO SE BORRE LA BD Y BACKEND RENDER 
+
+Parte A — Configurar (una sola vez)
+1. En back/stockpro-api/, copia el ejemplo:
+
+
+cd "E:\desarrollo\Proyectos\Proyecto FullStack Logistica\back\stockpro-api"
+Copy-Item .env.render.example .env.render
+2. Abre .env.render y complétalo. Con tus valores actuales quedaría así:
+
+
+RENDER_DATABASE_URL=""
+STOCKPRO_APP_DB_PASSWORD="mrG52QacLArYmiYlCWIa2wM-Bodl8Ctx"
+PLATFORM_ADMIN_EMAIL="admin@stockpro.dev"
+PLATFORM_ADMIN_PASSWORD="123456789"
+SEED_DEMO_TENANTS="true"
+ALLOW_DEMO_LOGIN="true"
+RENDER_DATABASE_URL lo dejas vacío — esa la pasas como argumento cada vez (cambia en cada recreación). El resto son fijos y se reusan siempre.
+.env.render está en .gitignore, no se sube.
+
+Parte B — Cada vez que Render borra la base (~30 días)
+1. Recrea el Postgres: Render → Blueprint → Re-apply (o creá el recurso a mano).
+
+2. En la pantalla del Postgres nuevo, copia la External Database URL.
+
+3. Un solo comando:
+
+
+cd "E:\desarrollo\Proyectos\Proyecto FullStack Logistica\back\stockpro-api"
+npm run bootstrap:render -- "postgresql://stockpro:LA_PASS@dpg-XXXX-a.virginia-postgres.render.com/stockpro_XXXX"
+4. El script corre migrate + rol + seed, verifica, y al final imprime algo así:
+
+
+════════ PEGAR EN RENDER → stockpro-api → Environment ════════
+  APP_DATABASE_URL=postgresql://stockpro_app:mrG52QacLArYmiYlCWIa2wM-Bodl8Ctx@dpg-XXXX-a/stockpro_XXXX
+  PLATFORM_ADMIN_EMAIL=admin@stockpro.dev
+  PLATFORM_ADMIN_PASSWORD=123456789
+  SEED_DEMO_TENANTS=true
+  ALLOW_DEMO_LOGIN=true
+5. Render → stockpro-api → Environment → pega/actualiza esos valores → Save. Redeploya solo.
+
+6. Log Live, sin P1000 ni "column does not exist". Entra al SuperAdmin (admin@stockpro.dev / 123456789) → Ajustes → activá "Tarjetas de acceso rápido".
+
+Eso es todo. De ~1 hora a ~5 minutos.
+
+Parte C — Probarlo ahora, sin romper nada
+Podés correrlo contra la base actual para ver que funciona. Importante: usá en .env.render la misma STOCKPRO_APP_DB_PASSWORD que ya está en Render (mrG52QacLArYmiYlCWIa2wM-Bodl8Ctx) — si ponés otra, create-app-role le cambia la clave al rol y la app deja de conectar hasta que actualices Render.
+
+
+npm run bootstrap:render -- "postgresql://stockpro:uUBoiEqb1yLrK0JwjqTAQOQVRstmJPs6@dpg-daf5p0f40ujc739nrvj0-a.virginia-postgres.render.com/stockpro_qwp5?sslmode=require"
+Es idempotente: migrate deploy no hace nada (ya está al día), create-app-role re-aplica la misma clave, seed hace upsert. Al final tenés que ver:
+
+
+  ✓ columnas nuevas en empresas (alertaVencimiento + formulaValorizacion, sin modoDesarrollo)
+  ✓ tabla plataforma_config (existe)
+  ✓ migraciones sin pendientes ni falladas (todas aplicadas)
+  ✓ PlatformAdmin con contraseña correcta (admin@stockpro.dev ok)
+  ✓ rol stockpro_app puede conectar (RLS activo)
+  ✓ todo verificado

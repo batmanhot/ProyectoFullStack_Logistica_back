@@ -161,18 +161,31 @@ VITE_API_URL=https://stockpro-api.onrender.com/api
 ## 7. Cuando Render borre la base (~30 días)
 
 Se pierde la **base** (datos + rol `stockpro_app`). El web service y el
-`render.yaml` siguen. Para revivir:
+`render.yaml` siguen.
 
-1. Blueprint → **re-apply** (recrea `stockpro-db`). O crear la Postgres a
-   mano con el mismo nombre `stockpro-db` / databaseName `stockpro` / user
-   `stockpro`.
-2. Repetir **§2 completo** (migrate + db:app-role + seed) contra la nueva
-   External URL — con la **misma** `STOCKPRO_APP_DB_PASSWORD` de antes para
-   no tener que tocar `APP_DATABASE_URL`.
-3. En `stockpro-api` → Environment: actualizar `DATABASE_URL` (si la
-   creaste a mano) y `APP_DATABASE_URL` (host nuevo). Si el blueprint
-   gestiona la base, `DATABASE_URL` se actualiza sola.
-4. Manual Deploy del web service. Verificar §5.
+### Vía rápida (recomendada): `npm run bootstrap:render`
+
+1. **Una sola vez**: copiá `.env.render.example` a `.env.render` y completá
+   los valores estables (`STOCKPRO_APP_DB_PASSWORD`, `PLATFORM_ADMIN_*`,
+   `SEED_DEMO_TENANTS`, `ALLOW_DEMO_LOGIN`). `.env.render` está en `.gitignore`.
+2. Blueprint → **re-apply** (recrea `stockpro-db`), o creá la Postgres a mano.
+3. Copiá la **External Database URL** nueva y:
+   ```bash
+   npm run bootstrap:render -- "postgresql://stockpro:...@...render.com/stockpro_xxxx"
+   ```
+   El script corre migrate deploy + create-app-role + seed con el env correcto,
+   **verifica** (columnas nuevas, `plataforma_config`, `_prisma_migrations` sano,
+   que el PlatformAdmin loguee, que `stockpro_app` conecte) y al final **imprime
+   el bloque exacto de env vars para Render** — incluido el `APP_DATABASE_URL`
+   ya armado (mismo nombre de base, host interno, user `stockpro_app`).
+4. Pegá ese bloque en `stockpro-api` → Environment. Save → redeploy. Verificar §5.
+
+### Vía manual (si el script falla)
+
+Repetir **§2 completo** (migrate + db:app-role + seed) contra la nueva
+External URL — con la **misma** `STOCKPRO_APP_DB_PASSWORD` de antes — y armar
+`APP_DATABASE_URL` a mano (§3): mismo nombre de base que `DATABASE_URL`, host
+interno, user `stockpro_app`. Manual Deploy del web service.
 
 > Los datos reales cargados por la consola SuperAdmin **no se recuperan** —
 > free tier no tiene backups. Si el proyecto deja de ser demo, pasar la
@@ -185,6 +198,24 @@ Se pierde la **base** (datos + rol `stockpro_app`). El web service y el
 - **RLS silenciosamente inactivo**: si por error ponés la URL del rol dueño
   en `APP_DATABASE_URL`, la app funciona pero **sin aislamiento entre
   tenants**. Confirmá que `APP_DATABASE_URL` usa `stockpro_app`.
+- **Mismo NOMBRE de base en las dos URLs** (aprendido a la mala, 2026-09-08):
+  `APP_DATABASE_URL` y `DATABASE_URL` tienen que apuntar a la MISMA base
+  (`.../stockpro_qwp5` o como se llame la generada) — solo cambian
+  `user:password` (`stockpro_app` vs `stockpro`). Si `APP_DATABASE_URL`
+  termina en `/stockpro` y la real es `/stockpro_qwp5`, la app corre contra
+  otra base: migraciones "aplicadas" que la app no ve, `column ... does not
+  exist`, etc.
+- **Si corrés `db:app-role` de nuevo**: ese script hace
+  `ALTER ROLE stockpro_app ... PASSWORD ...` — cambia la clave del rol. Hay
+  que actualizar la password dentro de `APP_DATABASE_URL` o el arranque falla
+  con `P1000 Authentication failed`.
+- **`_prisma_migrations` puede mentir tras un Recovery/restore**: si la base
+  se restauró de un backup viejo, `migrate deploy` puede decir "No pending
+  migrations" con la columna/tabla igual ausente. Verificá el esquema real
+  (`information_schema.columns`) y aplicá el DDL a mano con
+  `prisma db execute --file` si hace falta.
+- **PowerShell + `prisma db execute --file`**: `Out-File -Encoding utf8` mete
+  BOM → `syntax error at or near "ALTER"`. Usá `-Encoding ascii`.
 - **External vs Internal URL**: comandos desde tu PC → External; env vars
   del web service → Internal. No mezclar.
 - **Primer request lento**: el service free se duerme; la primera llamada
