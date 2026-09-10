@@ -56,7 +56,26 @@ export class EmailService implements OnModuleDestroy {
     const browser = await this.getBrowser();
     const page = await browser.newPage();
     try {
-      await page.setContent(html, { waitUntil: 'load' });
+      // Endurecimiento anti-SSRF (auditoría 2026-09-10): el HTML lo manda el
+      // cliente. Sin esto, un `<img src="http://interno/...">` / `<iframe
+      // src="file://...">` haría que Chromium (con --no-sandbox) pegue esas
+      // requests desde el servidor.
+      //  1. JS off — las plantillas no usan JS; mata cualquier <script>/fetch.
+      //  2. Se abortan TODAS las requests de subrecursos: el documento se
+      //     renderiza solo con lo que trae inline. Únicos permitidos: el
+      //     setContent inicial (about:) y data: URIs.
+      //  3. domcontentloaded + timeout corto — no se espera red (ya bloqueada).
+      await page.setJavaScriptEnabled(false);
+      await page.setRequestInterception(true);
+      page.on('request', (req) => {
+        const url = req.url();
+        if (req.isNavigationRequest() || url.startsWith('data:') || url.startsWith('about:')) {
+          void req.continue();
+        } else {
+          void req.abort();
+        }
+      });
+      await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 10_000 });
       const pdf = await page.pdf({ printBackground: true, preferCSSPageSize: true, format: 'A4' });
       return Buffer.from(pdf);
     } finally {

@@ -1,4 +1,13 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import { timingSafeEqual } from 'crypto';
+
+/** Comparación en tiempo constante — evita el side-channel de timing sobre el token. */
+function tokensIguales(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
+}
 
 /**
  * Guard del canal de INGESTA de backups: el job externo (GitHub Actions / cron /
@@ -19,7 +28,7 @@ export class BackupIngestGuard implements CanActivate {
       throw new UnauthorizedException('La ingesta de backups no está configurada (BACKUP_INGEST_TOKEN ausente o débil).');
     }
     const token = req.headers?.['x-backup-token'];
-    if (!token || token !== expected) {
+    if (!token || !tokensIguales(token, expected)) {
       throw new UnauthorizedException('Token de ingesta de backups inválido.');
     }
     return true;
