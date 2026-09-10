@@ -57,8 +57,11 @@ export class AuthController {
     return { accessToken, usuario };
   }
 
+  // El front comparte un lock single-flight para el refresh, pero varias pestañas
+  // + reintentos con backoff tras un 5xx pueden sumar llamadas legítimas. 60/min
+  // deja holgura sin abrir la puerta a abuso (el refresh igual valida la cookie).
   @Public()
-  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @Post('auth/refresh')
   @HttpCode(HttpStatus.OK)
   async refresh(@Req() req: FastifyRequest, @Res({ passthrough: true }) res: FastifyReply) {

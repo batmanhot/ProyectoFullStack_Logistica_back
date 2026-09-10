@@ -41,7 +41,7 @@ export class AdminAuthController {
   // Renovación silenciosa del access token de 8 h — el refresh token viene de
   // la cookie httpOnly, no del body.
   @Public()
-  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   async refresh(@Req() req: FastifyRequest, @Res({ passthrough: true }) res: FastifyReply) {
