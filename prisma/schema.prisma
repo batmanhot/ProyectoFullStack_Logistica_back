@@ -93,6 +93,7 @@ model Empresa {
   proyectos                 Proyecto[]
   alertasEnvio              AlertaEnvio[]
   auditoriasPlataforma      AuditoriaPlataforma[]
+  reglasAprobacion          ReglaAprobacion[]
 
   @@map("empresas")
 }
@@ -1197,6 +1198,38 @@ model PedidoInternoItem {
   notas        String?
 
   @@map("pedido_interno_items")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// AUTORIDAD DE APROBACIÓN CONFIGURABLE (2026-09-10, MEJORAS-DIFERIDAS #11b)
+// Saca del código el "quién aprueba" de los procesos que tienen un paso de
+// aprobación de estado/documento. Una fila por (empresa, proceso). El guard
+// AprobacionGuard consulta esto en vez de un @SoloRoles hardcodeado.
+//   · rolesAprobadores = [] → sin aprobador designado: basta el permiso de
+//     módulo (comportamiento previo de Despacho / Portal / Factura B2B).
+//   · rolesAprobadores no vacío → el código de rol del usuario debe estar en
+//     la lista. Owner/Admin (permiso '*') aprueban siempre, no se listan.
+// Sin montos ni niveles — eso es #11c (aprobación de OC en cascada).
+// ─────────────────────────────────────────────────────────────────
+enum ProcesoAprobacion {
+  PEDIDO_INTERNO // Pedido Interno: ENVIADO → APROBADO / RECHAZADO
+  DESPACHO       // Despacho: PEDIDO → APROBADO
+  PEDIDO_PORTAL  // Pedido Portal B2B: aprobar (→ Despacho) / rechazar
+  FACTURA_B2B    // Factura de proveedor B2B: rechazar
+}
+
+model ReglaAprobacion {
+  id               String            @id @default(cuid())
+  empresaId        String
+  empresa          Empresa           @relation(fields: [empresaId], references: [id])
+  proceso          ProcesoAprobacion
+  rolesAprobadores String[] // códigos de Rol (ej. ['supervisor','gerente-operaciones'])
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@unique([empresaId, proceso])
+  @@index([empresaId])
+  @@map("reglas_aprobacion")
 }
 
 // ─────────────────────────────────────────────────────────────────

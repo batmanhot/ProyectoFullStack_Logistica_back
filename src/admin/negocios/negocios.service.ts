@@ -8,6 +8,7 @@ import { UpdateNegocioDto } from './dto/update-negocio.dto';
 import { assertExists } from '../../common/utils/assert-exists.util';
 import { relanzarP2002 } from '../../common/utils/prisma-error.util';
 import { assertCuposUsuarioDisponibles } from '../../common/utils/plan-limits.util';
+import { sembrarReglasAprobacion } from '../../common/aprobacion-procesos';
 import { DIAS_GRACIA, calcularEstadoEfectivo } from '../estado-negocio.util';
 
 // Índices únicos que puede violar el alta/edición de un negocio — el mensaje
@@ -329,6 +330,10 @@ export class NegociosService {
         // la política de Row-Level Security de la tabla `usuarios` (bug real
         // encontrado al probar la creación de un negocio en vivo).
         await this.prisma.activarTenantEnTransaccion(tx as PrismaClient, empresa.id);
+
+        // #11b: reglas de aprobación por proceso en su valor por defecto
+        // (la migración cubre las empresas previas; esto, las nuevas).
+        await sembrarReglasAprobacion(tx, empresa.id);
 
         // Regla 3/5: cada cuenta activa ocupa un cupo del plan.
         await assertCuposUsuarioDisponibles(tx as PrismaClient, empresa.id, quiereAdmin ? 2 : 1);

@@ -23,6 +23,7 @@ describe('NegociosService.create', () => {
   beforeEach(() => {
     prismaMock = {
       planSaaS: { findUnique: vi.fn() },
+      reglaAprobacion: { createMany: vi.fn().mockResolvedValue({ count: 4 }) },
       rol: { findFirst: vi.fn(rolPorCodigo) },
       $transaction: vi.fn(),
       activarTenantEnTransaccion: vi.fn().mockResolvedValue(undefined),
@@ -52,6 +53,7 @@ describe('NegociosService.create', () => {
     const txMock = {
       empresa: { create: vi.fn().mockResolvedValue({ id: 'emp-1', codigo: 'nuevo-tenant', nombre: 'Nuevo Tenant SAC' }), findUnique: vi.fn().mockResolvedValue({ plan: null }) },
       planSaaS: { findUnique: vi.fn() },
+      reglaAprobacion: { createMany: vi.fn().mockResolvedValue({ count: 4 }) },
       usuario: { create: vi.fn().mockResolvedValue({ id: 'usr-1', nombre: 'Prop', email: 'prop@nuevo.demo' }), count: vi.fn().mockResolvedValue(0) },
     };
     prismaMock.$transaction.mockImplementation((fn: any) => fn(txMock));
@@ -77,6 +79,7 @@ describe('NegociosService.create', () => {
     const txMock = {
       empresa: { create: vi.fn().mockResolvedValue({ id: 'emp-1' }), findUnique: vi.fn().mockResolvedValue({ plan: null }) },
       planSaaS: { findUnique: vi.fn() },
+      reglaAprobacion: { createMany: vi.fn().mockResolvedValue({ count: 4 }) },
       usuario: {
         create: vi.fn()
           .mockResolvedValueOnce({ id: 'usr-owner', nombre: 'Prop', email: 'prop@nuevo.demo' })
@@ -115,6 +118,7 @@ describe('NegociosService.create', () => {
     const txMock = {
       empresa: { create: vi.fn().mockResolvedValue({ id: 'emp-1' }), findUnique: vi.fn().mockResolvedValue({ plan: null }) },
       planSaaS: { findUnique: vi.fn() },
+      reglaAprobacion: { createMany: vi.fn().mockResolvedValue({ count: 4 }) },
       usuario: { create: vi.fn().mockResolvedValue({ id: 'usr-1', nombre: 'Prop', email: 'prop@nuevo.demo' }), count: vi.fn().mockResolvedValue(0) },
     };
     prismaMock.$transaction.mockImplementation((fn: any) => fn(txMock));
@@ -136,6 +140,7 @@ describe('NegociosService.update', () => {
     txMock = {
       empresa: { update: vi.fn().mockResolvedValue({ id: 'e1' }), findUnique: vi.fn().mockResolvedValue({ plan: null }) },
       planSaaS: { findUnique: vi.fn() },
+      reglaAprobacion: { createMany: vi.fn().mockResolvedValue({ count: 4 }) },
       usuario: {
         findFirst: vi.fn().mockResolvedValue({ id: 'usr-admin', empresaId: 'e1', activo: true }),
         update: vi.fn().mockResolvedValue({ id: 'usr-admin' }),
@@ -147,6 +152,7 @@ describe('NegociosService.update', () => {
       empresa: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
       usuario: { findFirst: vi.fn(), update: vi.fn() },
       planSaaS: { findUnique: vi.fn() },
+      reglaAprobacion: { createMany: vi.fn().mockResolvedValue({ count: 4 }) },
       activarTenantEnTransaccion: vi.fn().mockResolvedValue(undefined),
       $transaction: vi.fn((fn) => fn(txMock)),
     };
@@ -396,6 +402,7 @@ describe('NegociosService.vista360', () => {
     prisma = {
       empresa: { findUnique: vi.fn() },
       planSaaS: { findUnique: vi.fn() },
+      reglaAprobacion: { createMany: vi.fn().mockResolvedValue({ count: 4 }) },
       renovacionPlan: { findMany: vi.fn().mockResolvedValue([]) },
       facturaSaaS: { groupBy: vi.fn().mockResolvedValue([]), aggregate: vi.fn().mockResolvedValue({ _sum: { total: 0 }, _count: 0 }) },
       respaldoNegocio: { findFirst: vi.fn().mockResolvedValue(null), count: vi.fn().mockResolvedValue(0) },

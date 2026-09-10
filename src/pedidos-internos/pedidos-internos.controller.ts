@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
 import { CurrentUser, TenantId } from '../common/decorators/tenant.decorator';
 import { Permiso } from '../common/decorators/permiso.decorator';
-import { SoloRoles } from '../common/decorators/solo-roles.decorator';
+import { Aprobacion } from '../common/decorators/aprobacion.decorator';
 import { PedidosInternosService } from './pedidos-internos.service';
 import { CreatePedidoInternoDto } from './dto/create-pedido-interno.dto';
 import { UpdatePedidoInternoDto } from './dto/update-pedido-interno.dto';
@@ -64,11 +64,11 @@ export class PedidosInternosController {
   }
 
   // 2026-09-04: Almacenero/Despachador ya tienen el permiso de módulo
-  // 'pedidos-internos' (preparan y entregan), pero Aprobar es una decisión
-  // que compromete gasto/consumo del proyecto — se reserva a Supervisor+
-  // (Gerente de Operaciones/Admin/Owner pasan igual por el comodín '*' en
-  // RolesEspecificosGuard, sin necesidad de listarlos acá).
-  @SoloRoles('supervisor', 'gerente-operaciones')
+  // 'pedidos-internos' (preparan y entregan), pero Aprobar/Rechazar compromete
+  // gasto/consumo del proyecto. Quién puede hacerlo lo define el tenant en
+  // Configuración → Aprobaciones (#11b); se siembra con Supervisor + Gerente
+  // de Operaciones = el @SoloRoles que había antes. Owner/Admin ('*') siempre.
+  @Aprobacion('PEDIDO_INTERNO')
   @Post(':id/aprobar')
   aprobar(
     @TenantId() empresaId: string,
@@ -79,7 +79,7 @@ export class PedidosInternosController {
     return this.pedidosInternosService.aprobar(empresaId, id, user.sub, dto);
   }
 
-  @SoloRoles('supervisor', 'gerente-operaciones')
+  @Aprobacion('PEDIDO_INTERNO')
   @Post(':id/rechazar')
   rechazar(
     @TenantId() empresaId: string,

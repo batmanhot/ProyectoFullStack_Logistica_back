@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { TenantId } from '../common/decorators/tenant.decorator';
 import { Permiso } from '../common/decorators/permiso.decorator';
+import { Aprobacion } from '../common/decorators/aprobacion.decorator';
 import { FacturasB2BService } from './facturas-b2b.service';
 import { CreateFacturaB2BDto } from './dto/create-factura-b2b.dto';
 import { RechazarFacturaB2BDto } from './dto/rechazar-factura-b2b.dto';
@@ -38,6 +39,7 @@ export class FacturasB2BController {
     return this.facturasB2BService.marcarRecibida(empresaId, id);
   }
 
+  @Aprobacion('FACTURA_B2B')
   @Post(':id/rechazar')
   rechazar(
     @TenantId() empresaId: string,

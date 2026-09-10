@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { TenantId } from '../common/decorators/tenant.decorator';
 import { Permiso } from '../common/decorators/permiso.decorator';
+import { Aprobacion } from '../common/decorators/aprobacion.decorator';
 import { PortalService } from './portal.service';
 import { AprobarPedidoPortalDto } from './dto/aprobar-pedido-portal.dto';
 import { RechazarPedidoPortalDto } from './dto/rechazar-pedido-portal.dto';
@@ -21,6 +22,7 @@ export class PedidosPortalAdminController {
   }
 
   /** Convierte en un Despacho real (con reserva de stock) vía DespachosService. */
+  @Aprobacion('PEDIDO_PORTAL')
   @Post(':id/aprobar')
   aprobar(
     @TenantId() empresaId: string,
@@ -30,6 +32,7 @@ export class PedidosPortalAdminController {
     return this.portalService.aprobarYConvertir(empresaId, id, dto);
   }
 
+  @Aprobacion('PEDIDO_PORTAL')
   @Post(':id/rechazar')
   rechazar(
     @TenantId() empresaId: string,

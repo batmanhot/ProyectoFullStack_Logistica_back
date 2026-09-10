@@ -10,6 +10,7 @@
 // ═══════════════════════════════════════════════════════════════════
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { sembrarReglasAprobacion } from '../src/common/aprobacion-procesos';
 
 const prisma = new PrismaClient();
 
@@ -468,6 +469,10 @@ async function main() {
     }
 
     console.log(`  ✓ Empresa: ${empresa.nombre} (${empresa.codigo}) — plan: ${empresa.plan}`);
+
+    // #11b — reglas de aprobación por proceso, en su valor por defecto
+    // (idempotente: skipDuplicates por el unique [empresaId, proceso]).
+    await sembrarReglasAprobacion(prisma, empresa.id);
 
     // El rol 'solicitante' necesita un área asignada para poder crear Pedidos
     // Internos (Usuario.areaId, ver schema.prisma) — se crea acá para que el

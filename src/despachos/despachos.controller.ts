@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
 import { TenantId } from '../common/decorators/tenant.decorator';
 import { Permiso } from '../common/decorators/permiso.decorator';
+import { Aprobacion } from '../common/decorators/aprobacion.decorator';
 import { DespachosService } from './despachos.service';
 import { CreateDespachoDto } from './dto/create-despacho.dto';
 import { UpdateDespachoDto } from './dto/update-despacho.dto';
@@ -38,6 +39,10 @@ export class DespachosController {
     return this.despachosService.update(empresaId, id, dto);
   }
 
+  // #11b: por defecto lo aprueba cualquiera con el permiso 'despachos' (lista
+  // vacía en ReglaAprobacion). El tenant puede restringirlo en Configuración
+  // → Aprobaciones.
+  @Aprobacion('DESPACHO')
   @Post(':id/aprobar')
   aprobar(@TenantId() empresaId: string, @Param('id') id: string) {
     return this.despachosService.aprobar(empresaId, id);
