@@ -10,7 +10,6 @@
 // ═══════════════════════════════════════════════════════════════════
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
-import { sembrarReglasAprobacion } from '../src/common/aprobacion-procesos';
 
 const prisma = new PrismaClient();
 
@@ -168,78 +167,12 @@ const ROLES_BASE: { codigo: string; label: string; permisos: string[] }[] = [
   },
 ];
 
-// Un usuario por rol para poder probar cada nivel de acceso desde las tarjetas
-// de acceso rápido del Login (ver ROLES_LABEL en Login.jsx). Incluye 'owner' y
-// 'admin' como usuarios separados — docs/GOBIERNO-PLATAFORMA.md regla 3: todo
-// negocio nace con un Propietario (owner) obligatorio + un Admin del Negocio
-// (admin) opcional. Ambos tienen permisos ['*'].
-const EMPRESAS_DEMO = [
-  {
-    codigo: 'dlnorte',
-    nombre: 'Distribuidora Lima Norte',
-    ruc: '20100000001',
-    email: 'contacto@dlnorte.demo',
-    origen: 'demo',
-    // empresarial: única forma de que los 12 roles sembrados (Fase 2 + Fase 3
-    // vista móvil) se puedan probar todos sin que el plan bloquee alguno (Fase 3b).
-    plan: 'empresarial',
-    usuarios: [
-      { email: 'owner@dlnorte.demo',       nombre: 'Propietario DL Norte', rolCodigo: 'owner' },
-      { email: 'admin@dlnorte.demo',       nombre: 'Admin DL Norte',       rolCodigo: 'admin' },
-      { email: 'gerente@dlnorte.demo',     nombre: 'Gerente Operaciones DL Norte', rolCodigo: 'gerente-operaciones' },
-      { email: 'supervisor@dlnorte.demo',  nombre: 'Supervisor DL Norte',  rolCodigo: 'supervisor' },
-      { email: 'almacenero@dlnorte.demo',  nombre: 'Almacenero DL Norte',  rolCodigo: 'almacenero' },
-      { email: 'despachador@dlnorte.demo', nombre: 'Despachador DL Norte', rolCodigo: 'despachador' },
-      { email: 'compras@dlnorte.demo',     nombre: 'Analista Compras DL Norte', rolCodigo: 'analista-compras' },
-      { email: 'comercial@dlnorte.demo',   nombre: 'Ejecutivo Comercial DL Norte', rolCodigo: 'ejecutivo-comercial' },
-      // Segundo vendedor demo (2026-09-03): con nombre real, no la etiqueta
-      // de rol — para poder probar de verdad "varios vendedores por empresa"
-      // (filtro por responsable, reasignación de oportunidades, ranking
-      // comparativo en Oportunidades > Rendimiento por vendedor).
-      { email: 'comercial2@dlnorte.demo',  nombre: 'Carla Mendoza',        rolCodigo: 'ejecutivo-comercial' },
-      { email: 'transporte@dlnorte.demo',  nombre: 'Coordinador Transporte DL Norte', rolCodigo: 'coordinador-transporte' },
-      // Sin transportistaId acá — prisma:seed no crea Transportistas (eso lo hace
-      // DatosService.sembrarDlNorte, disparado por "Restaurar Datos Demo"), que
-      // además re-vincula este usuario a un transportista válido en cada reset.
-      { email: 'chofer@dlnorte.demo',      nombre: 'Chofer DL Norte',      rolCodigo: 'chofer' },
-      { email: 'contable@dlnorte.demo',    nombre: 'Contable DL Norte',    rolCodigo: 'contable-finanzas' },
-      { email: 'auditor@dlnorte.demo',     nombre: 'Auditor DL Norte',     rolCodigo: 'auditor' },
-      { email: 'solicitante@dlnorte.demo', nombre: 'Solicitante DL Norte', rolCodigo: 'solicitante' },
-    ],
-  },
-  {
-    codigo: 'acme',
-    nombre: 'Acme Logística S.A.C.',
-    ruc: '20100000002',
-    email: 'contacto@acme.demo',
-    origen: 'demo',
-    plan: 'empresarial',
-    usuarios: [
-      { email: 'owner@acme.demo',       nombre: 'Propietario Acme', rolCodigo: 'owner' },
-      { email: 'admin@acme.demo',       nombre: 'Admin Acme',       rolCodigo: 'admin' },
-      { email: 'gerente@acme.demo',     nombre: 'Gerente Operaciones Acme', rolCodigo: 'gerente-operaciones' },
-      { email: 'supervisor@acme.demo',  nombre: 'Supervisor Acme',  rolCodigo: 'supervisor' },
-      { email: 'almacenero@acme.demo',  nombre: 'Almacenero Acme',  rolCodigo: 'almacenero' },
-      { email: 'despachador@acme.demo', nombre: 'Despachador Acme', rolCodigo: 'despachador' },
-      { email: 'compras@acme.demo',     nombre: 'Analista Compras Acme', rolCodigo: 'analista-compras' },
-      { email: 'comercial@acme.demo',   nombre: 'Ejecutivo Comercial Acme', rolCodigo: 'ejecutivo-comercial' },
-      { email: 'transporte@acme.demo',  nombre: 'Coordinador Transporte Acme', rolCodigo: 'coordinador-transporte' },
-      { email: 'contable@acme.demo',    nombre: 'Contable Acme',    rolCodigo: 'contable-finanzas' },
-      { email: 'auditor@acme.demo',     nombre: 'Auditor Acme',     rolCodigo: 'auditor' },
-      { email: 'solicitante@acme.demo', nombre: 'Solicitante Acme', rolCodigo: 'solicitante' },
-    ],
-  },
-];
-
-// Password demo único para ambos admins — cámbialo apenas tengas datos reales.
-const DEMO_PASSWORD = 'StockPro2026!';
-
-// ── Fase 7d ──────────────────────────────────────────────────────
-const PLATFORM_ADMIN_DEMO = {
-  email: 'admin@stockpro.dev',
-  nombre: 'Super Admin StockPro',
-  password: 'AdminSaaS2026!',
-};
+// Los negocios DEMO (dlnorte / acme) YA NO se siembran acá — este script es
+// solo bootstrap de plataforma (roles base, planes, PlatformAdmin, landing,
+// PlataformaConfig). Para una instancia de demostración comercial o desarrollo
+// local, los negocios demo se siembran aparte con `npm run seed:demo-tenants`
+// (prisma/seed-demo-tenants.ts, gate SEED_DEMO_TENANTS=true). Una producción
+// real de cliente no los tiene.
 
 const PLANES_BASE: Array<{
   id: string;
@@ -404,16 +337,14 @@ async function main() {
   // null dentro de un identificador de unique compuesto en tiempo de
   // ejecución ("Argument `empresaId` must not be null"), aunque el campo
   // sea nullable en el schema. Por eso se resuelve con findFirst + create/update.
-  const rolesBaseCreados = new Map<string, string>(); // codigo -> id
   for (const r of ROLES_BASE) {
     const existente = await prisma.rol.findFirst({
       where: { empresaId: null, codigo: r.codigo },
     });
 
-    let rol: { id: string };
     if (existente) {
       await prisma.permiso.deleteMany({ where: { rolId: existente.id } });
-      rol = await prisma.rol.update({
+      await prisma.rol.update({
         where: { id: existente.id },
         data: {
           label: r.label,
@@ -421,7 +352,7 @@ async function main() {
         },
       });
     } else {
-      rol = await prisma.rol.create({
+      await prisma.rol.create({
         data: {
           codigo: r.codigo,
           label: r.label,
@@ -432,99 +363,40 @@ async function main() {
       });
     }
 
-    rolesBaseCreados.set(r.codigo, rol.id);
     console.log(`  ✓ Rol base: ${r.label} (${r.codigo})`);
   }
 
-  // 2) Empresas demo + un usuario por rol
-  // (Usuario.empresaId NO es nullable, así que el upsert compuesto sí es válido aquí.)
-  //
-  // En un despliegue real (Render, etc.) pasar SEED_DEMO_TENANTS=false para NO
-  // crear 'dlnorte'/'acme' con la contraseña demo pública `StockPro2026!`. Los
-  // roles base, planes, PlatformAdmin y landing (pasos 1, 3, 4, 5) SÍ se
-  // siembran siempre — la plataforma no arranca sin ellos.
-  const sembrarDemo = process.env.SEED_DEMO_TENANTS !== 'false';
-  if (!sembrarDemo) console.log('  · SEED_DEMO_TENANTS=false — se omiten las empresas demo (dlnorte/acme)');
-  const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 12);
-  for (const e of sembrarDemo ? EMPRESAS_DEMO : []) {
-    let empresa = await prisma.empresa.upsert({
-      where: { codigo: e.codigo },
-      update: {},
-      create: {
-        codigo: e.codigo,
-        nombre: e.nombre,
-        ruc: e.ruc,
-        email: e.email,
-        origen: e.origen,
-        plan: e.plan,
-      },
-    });
-
-    // Backfill de Fase 3b: el upsert de arriba no toca `plan` en `update`
-    // (para no pisar un cambio hecho a mano desde AdminSaaS) — solo se
-    // corrige si la empresa se quedó en el "starter" default que nunca se
-    // reemplazó.
-    if (empresa.plan === 'starter') {
-      empresa = await prisma.empresa.update({ where: { id: empresa.id }, data: { plan: e.plan } });
-    }
-
-    console.log(`  ✓ Empresa: ${empresa.nombre} (${empresa.codigo}) — plan: ${empresa.plan}`);
-
-    // #11b — reglas de aprobación por proceso, en su valor por defecto
-    // (idempotente: skipDuplicates por el unique [empresaId, proceso]).
-    await sembrarReglasAprobacion(prisma, empresa.id);
-
-    // El rol 'solicitante' necesita un área asignada para poder crear Pedidos
-    // Internos (Usuario.areaId, ver schema.prisma) — se crea acá para que el
-    // usuario demo funcione de una sola pieza, sin depender de "Restaurar
-    // Datos Demo" (que solo corre por tenant, después del primer login).
-    const areaOps = await prisma.areaInterna.upsert({
-      where: { empresaId_codigo: { empresaId: empresa.id, codigo: 'OPS' } },
-      update: {},
-      create: { empresaId: empresa.id, nombre: 'Operaciones', codigo: 'OPS' },
-    });
-
-    for (const u of e.usuarios) {
-      const rolId = rolesBaseCreados.get(u.rolCodigo)!;
-      const usuario = await prisma.usuario.upsert({
-        where: { empresaId_email: { empresaId: empresa.id, email: u.email } },
-        update: { areaId: u.rolCodigo === 'solicitante' ? areaOps.id : undefined },
-        create: {
-          empresaId: empresa.id,
-          nombre: u.nombre,
-          email: u.email,
-          passwordHash,
-          rolId,
-          areaId: u.rolCodigo === 'solicitante' ? areaOps.id : undefined,
-        },
-      });
-      console.log(`  ✓ Usuario ${u.rolCodigo}: ${usuario.email} / password demo: ${DEMO_PASSWORD}`);
-    }
+  // 2) PlatformAdmin (Fase 7d) — login separado en /api/admin/auth/login.
+  // OBLIGATORIO por env: no hay credencial hardcodeada de respaldo. Sin estas
+  // variables el seed falla en vez de crear un SuperAdmin con contraseña
+  // conocida (hallazgo de seguridad 2026-09-10). Los SuperAdmin adicionales
+  // (máx. 2) se crean después desde el panel y viven en la base.
+  const platformAdminEmail = process.env.PLATFORM_ADMIN_EMAIL?.trim();
+  const platformAdminPassword = process.env.PLATFORM_ADMIN_PASSWORD?.trim();
+  if (!platformAdminEmail || !platformAdminPassword) {
+    throw new Error(
+      'PLATFORM_ADMIN_EMAIL y PLATFORM_ADMIN_PASSWORD son obligatorias para el seed. ' +
+        'Configúralas en .env (ver .env.example).',
+    );
   }
-
-  // 3) PlatformAdmin (Fase 7d) — login separado en /api/admin/auth/login.
-  // En producción, pasar PLATFORM_ADMIN_EMAIL/PLATFORM_ADMIN_PASSWORD como
-  // variables de entorno (nunca hardcodear la credencial real acá ni en el
-  // historial de git) — sin esas variables, cae al admin demo de siempre.
-  const platformAdminEmail = process.env.PLATFORM_ADMIN_EMAIL || PLATFORM_ADMIN_DEMO.email;
-  const platformAdminPassword = process.env.PLATFORM_ADMIN_PASSWORD || PLATFORM_ADMIN_DEMO.password;
+  const platformAdminNombre = process.env.PLATFORM_ADMIN_NOMBRE?.trim() || 'Super Admin';
   const adminPasswordHash = await bcrypt.hash(platformAdminPassword, 12);
   const platformAdmin = await prisma.platformAdmin.upsert({
     where: { email: platformAdminEmail },
     // Sincroniza la contraseña en cada corrida: sin esto, cambiar
     // PLATFORM_ADMIN_PASSWORD y re-seedear no tenía efecto si la fila ya existía.
     // esNativo=true: es la cuenta raíz de la plataforma (regla de gobierno 2).
-    update: { passwordHash: adminPasswordHash, nombre: PLATFORM_ADMIN_DEMO.nombre, activo: true, esNativo: true },
+    update: { passwordHash: adminPasswordHash, nombre: platformAdminNombre, activo: true, esNativo: true },
     create: {
       email: platformAdminEmail,
-      nombre: PLATFORM_ADMIN_DEMO.nombre,
+      nombre: platformAdminNombre,
       passwordHash: adminPasswordHash,
       esNativo: true,
     },
   });
   console.log(`  ✓ PlatformAdmin: ${platformAdmin.email}`);
 
-  // 4) Catálogo base de PlanSaaS (Fase 7d)
+  // 3) Catálogo base de PlanSaaS (Fase 7d)
   for (const p of PLANES_BASE) {
     let plan = await prisma.planSaaS.upsert({
       where: { id: p.id },
@@ -548,23 +420,25 @@ async function main() {
     console.log(`  ✓ Plan: ${plan.nombre} (${plan.id}) — módulos: ${plan.modulosIncluidos.join(', ')}`);
   }
 
+  // 4) Configuración de plataforma (singleton) — el switch de tarjetas de acceso
+  // rápido del Login. Se crea si no existe: ON solo si esta es una instancia de
+  // demo/desarrollo (SEED_DEMO_TENANTS=true), OFF en una producción real. Si ya
+  // existe, se respeta lo que el SuperAdmin haya dejado configurado.
+  const esInstanciaDemo = process.env.SEED_DEMO_TENANTS === 'true';
+  const plataformaConfigExistente = await prisma.plataformaConfig.findFirst();
+  if (!plataformaConfigExistente) {
+    await prisma.plataformaConfig.create({ data: { accesoRapidoTarjetas: esInstanciaDemo } });
+    console.log(`  ✓ PlataformaConfig: accesoRapidoTarjetas=${esInstanciaDemo}`);
+  } else {
+    console.log('  · PlataformaConfig: ya existe, no se sobrescribe');
+  }
+
   // 5) Landing Page — singleton (empresaId no aplica, no tiene RLS, ver Fase 7d).
   // Solo se aplica si al registro le falta contenido real (tagline, subtítulo
   // del hero o al menos una característica) — así no pisa una configuración
   // que el SuperAdmin ya haya completado a mano desde el panel en una corrida
   // posterior del seed, pero sí corrige el registro mínimo/de prueba que
   // quedó de Fase 7d (solo `hero.titulo` + `sitio.nombre`).
-  // Configuración de plataforma (singleton) — el switch de tarjetas de acceso
-  // rápido del Login. Se crea si no existe: ON en entornos de desarrollo/demo
-  // (SEED_DEMO_TENANTS != false), OFF en un despliegue real. Si ya existe, se
-  // respeta lo que el SuperAdmin haya dejado configurado.
-  const plataformaConfigExistente = await prisma.plataformaConfig.findFirst();
-  if (!plataformaConfigExistente) {
-    await prisma.plataformaConfig.create({ data: { accesoRapidoTarjetas: sembrarDemo } });
-    console.log(`  ✓ PlataformaConfig: accesoRapidoTarjetas=${sembrarDemo}`);
-  } else {
-    console.log('  · PlataformaConfig: ya existe, no se sobrescribe');
-  }
 
   const landingExistente = await prisma.landingConfig.findFirst();
   const landingData = landingExistente?.data as Record<string, any> | undefined;

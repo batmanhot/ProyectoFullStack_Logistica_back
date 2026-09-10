@@ -1,11 +1,16 @@
 import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 
-// Mismo password demo que prisma/seed.ts (DEMO_PASSWORD) — se repite acá
-// porque seed.ts es un script standalone, no un módulo importable por Nest.
-const DEMO_PASSWORD = 'StockPro2026!';
+// Contraseña para los usuarios demo que crea "Restaurar Datos Demo" (ej. el
+// Chofer demo). En una instancia de demostración se define DEMO_TENANT_PASSWORD
+// (misma que usa `npm run seed:demo-tenants`). Sin esa variable — el caso de una
+// producción real donde alguien igual toca el botón — cae a un valor aleatorio
+// inutilizable para login: la fila del usuario se crea (la necesita el FK del
+// transportista) pero nadie puede entrar con ella.
+const DEMO_PASSWORD = process.env.DEMO_TENANT_PASSWORD?.trim() || randomBytes(24).toString('base64');
 
 // La Postgres free de Render es lenta y agrega latencia app→BD. `maxWait` alto
 // para conseguir conexión del pool bajo carga (default 2s se queda corto);

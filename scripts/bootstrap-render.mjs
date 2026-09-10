@@ -47,6 +47,7 @@ const APP_PASS = (cfg.STOCKPRO_APP_DB_PASSWORD || '').trim();
 const ADMIN_EMAIL = (cfg.PLATFORM_ADMIN_EMAIL || 'admin@stockpro.dev').trim();
 const ADMIN_PASS = (cfg.PLATFORM_ADMIN_PASSWORD || '').trim();
 const SEED_DEMO_TENANTS = (cfg.SEED_DEMO_TENANTS || 'false').trim();
+const DEMO_TENANT_PASSWORD = (cfg.DEMO_TENANT_PASSWORD || '').trim();
 const ALLOW_DEMO_LOGIN = (cfg.ALLOW_DEMO_LOGIN || 'false').trim();
 
 if (!DATABASE_URL) die('Falta la URL de la base. Pasala como argumento o poné RENDER_DATABASE_URL en .env.render');
@@ -85,13 +86,25 @@ run('npx prisma migrate deploy', { DATABASE_URL });
 step('2/4  create-app-role (rol stockpro_app + grants)');
 run('npx ts-node prisma/create-app-role.ts', { DATABASE_URL, STOCKPRO_APP_DB_PASSWORD: APP_PASS });
 
-step('3/4  seed (roles base, planes, PlatformAdmin, landing, plataforma-config' + (SEED_DEMO_TENANTS !== 'false' ? ', tenants demo' : '') + ')');
+step('3/4  seed (roles base, planes, PlatformAdmin, landing, plataforma-config)');
 run('npx ts-node prisma/seed.ts', {
   DATABASE_URL,
   SEED_DEMO_TENANTS,
   PLATFORM_ADMIN_EMAIL: ADMIN_EMAIL,
   PLATFORM_ADMIN_PASSWORD: ADMIN_PASS,
 });
+
+// Negocios demo — SOLO si esta instancia se declara de demostración
+// (SEED_DEMO_TENANTS=true). Una producción real NO los tiene.
+if (SEED_DEMO_TENANTS === 'true') {
+  if (!DEMO_TENANT_PASSWORD) die('SEED_DEMO_TENANTS=true pero falta DEMO_TENANT_PASSWORD en .env.render');
+  step('3b/4  seed:demo-tenants (dlnorte / acme — instancia de demostración)');
+  run('npx ts-node prisma/seed-demo-tenants.ts', {
+    DATABASE_URL,
+    SEED_DEMO_TENANTS,
+    DEMO_TENANT_PASSWORD,
+  });
+}
 
 // ── 3. Verificación real ─────────────────────────────────────────────
 step('4/4  verificación');

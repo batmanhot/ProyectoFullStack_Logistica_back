@@ -81,11 +81,18 @@ npm run db:app-role
 #   → ✓ Rol stockpro_app creado/actualizado
 #   → ✓ Privilegios GRANT/ALTER DEFAULT PRIVILEGES aplicados
 
-# 2.3 — Datos base: roles, planes, PlatformAdmin, landing (SIN tenants demo)
-export SEED_DEMO_TENANTS="false"
+# 2.3 — Datos base: roles, planes, PlatformAdmin, landing. NO crea tenants demo.
+# PLATFORM_ADMIN_EMAIL / PLATFORM_ADMIN_PASSWORD son OBLIGATORIAS — el seed falla
+# sin ellas (ya no hay admin demo de respaldo). Los negocios de un cliente real
+# se crean después desde el panel SuperAdmin → Negocios.
 export PLATFORM_ADMIN_EMAIL="<tu-email-superadmin>"
 export PLATFORM_ADMIN_PASSWORD="<contraseña-fuerte-superadmin>"
 npm run prisma:seed
+
+# 2.3b — SOLO si esta instancia es de DEMOSTRACIÓN comercial (no producción real):
+#   export SEED_DEMO_TENANTS="true"
+#   export DEMO_TENANT_PASSWORD="<clave-de-los-usuarios-demo>"
+#   npm run seed:demo-tenants
 ```
 
 `db:app-role` deja cubiertas también las tablas de migraciones futuras
