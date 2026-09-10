@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -8,6 +9,17 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateUsuarioDto } from './dto/create-usuario.dto';
 import { UpdateUsuarioDto } from './dto/update-usuario.dto';
 import { assertExists } from '../common/utils/assert-exists.util';
+import { assertCuposUsuarioDisponibles } from '../common/utils/plan-limits.util';
+
+// Regla de gobierno de plataforma (docs/GOBIERNO-PLATAFORMA.md, regla 3):
+// los usuarios Propietario (owner) y Administrador del Negocio (admin) los
+// registra y gestiona ÚNICAMENTE el SuperAdmin (vía /admin/negocios). El
+// tenant no puede crearlos, editarlos, cambiarles el rol ni eliminarlos.
+const ROLES_GESTIONADOS_POR_PLATAFORMA = ['owner', 'admin'];
+const MSG_ROL_PLATAFORMA =
+  'Los usuarios Propietario y Administrador del Negocio los gestiona el administrador de la plataforma, no se editan desde aquí.';
+const esRolDePlataforma = (codigo: string | undefined | null): boolean =>
+  !!codigo && ROLES_GESTIONADOS_POR_PLATAFORMA.includes(codigo);
 
 // passwordHash NUNCA se selecciona hacia afuera del service (sección 7 — seguridad).
 const SELECT_PUBLICO = {
@@ -21,6 +33,7 @@ const SELECT_PUBLICO = {
   area: { select: { id: true, nombre: true, codigo: true } }, // Fase 6
   transportista: { select: { id: true, nombre: true, placa: true } }, // Fase 3 vista móvil
   metaVentasMensual: true, // Fase 10 Gestión Comercial
+  telefono: true, documento: true, cargo: true, // datos de perfil (2026-09-09)
 } as const;
 
 @Injectable()
@@ -46,14 +59,20 @@ export class UsuariosService {
   }
 
   async create(empresaId: string, dto: CreateUsuarioDto) {
-    await this.validarRol(empresaId, dto.rolId);
+    const rol = await this.validarRol(empresaId, dto.rolId);
+    if (esRolDePlataforma(rol?.codigo)) {
+      throw new ForbiddenException(MSG_ROL_PLATAFORMA);
+    }
     if (dto.areaId) await this.validarArea(empresaId, dto.areaId);
     if (dto.transportistaId) await this.validarTransportista(empresaId, dto.transportistaId);
     const passwordHash = await bcrypt.hash(dto.password, 12);
 
     try {
-      return await this.prisma.withTenant(empresaId, (tx) =>
-        tx.usuario.create({
+      return await this.prisma.withTenant(empresaId, async (tx) => {
+        // Regla 3/5: cada cuenta activa ocupa un cupo del plan. El alta crea la
+        // cuenta activa, así que consume uno.
+        await assertCuposUsuarioDisponibles(tx, empresaId, 1);
+        return tx.usuario.create({
           data: {
             empresaId,
             nombre: dto.nombre,
@@ -63,10 +82,13 @@ export class UsuariosService {
             areaId: dto.areaId,
             transportistaId: dto.transportistaId,
             metaVentasMensual: dto.metaVentasMensual,
+            telefono: dto.telefono,
+            documento: dto.documento,
+            cargo: dto.cargo,
           },
           select: SELECT_PUBLICO,
-        }),
-      );
+        });
+      });
     } catch (e: any) {
       if (e.code === 'P2002') {
         throw new ConflictException('Ya existe un usuario con ese email en esta empresa');
@@ -76,10 +98,19 @@ export class UsuariosService {
   }
 
   async update(empresaId: string, id: string, dto: UpdateUsuarioDto) {
-    await this.findOne(empresaId, id); // lanza 404 si no existe / no pertenece al tenant
+    const actual = await this.findOne(empresaId, id); // lanza 404 si no existe / no pertenece al tenant
+
+    // No se puede tocar un usuario Propietario/Admin del Negocio desde el tenant…
+    if (esRolDePlataforma(actual.rol?.codigo)) {
+      throw new ForbiddenException(MSG_ROL_PLATAFORMA);
+    }
 
     if (dto.rolId) {
-      await this.validarRol(empresaId, dto.rolId);
+      const rol = await this.validarRol(empresaId, dto.rolId);
+      // …ni promover a uno hacia esos roles.
+      if (esRolDePlataforma(rol?.codigo)) {
+        throw new ForbiddenException(MSG_ROL_PLATAFORMA);
+      }
     }
     if (dto.areaId) {
       await this.validarArea(empresaId, dto.areaId);
@@ -96,6 +127,9 @@ export class UsuariosService {
       ...(dto.areaId !== undefined && { areaId: dto.areaId }),
       ...(dto.transportistaId !== undefined && { transportistaId: dto.transportistaId }),
       ...(dto.metaVentasMensual !== undefined && { metaVentasMensual: dto.metaVentasMensual }),
+      ...(dto.telefono !== undefined && { telefono: dto.telefono }),
+      ...(dto.documento !== undefined && { documento: dto.documento }),
+      ...(dto.cargo !== undefined && { cargo: dto.cargo }),
     };
 
     // password solo se actualiza si se envía explícitamente (sección 5 — Usuario).
@@ -103,10 +137,14 @@ export class UsuariosService {
       data.passwordHash = await bcrypt.hash(dto.password, 12);
     }
 
+    // Reactivar una cuenta también consume un cupo del plan.
+    const reactivando = dto.activo === true && actual.activo === false;
+
     try {
-      return await this.prisma.withTenant(empresaId, (tx) =>
-        tx.usuario.update({ where: { id }, data, select: SELECT_PUBLICO }),
-      );
+      return await this.prisma.withTenant(empresaId, async (tx) => {
+        if (reactivando) await assertCuposUsuarioDisponibles(tx, empresaId, 1);
+        return tx.usuario.update({ where: { id }, data, select: SELECT_PUBLICO });
+      });
     } catch (e: any) {
       if (e.code === 'P2002') {
         throw new ConflictException('Ya existe un usuario con ese email en esta empresa');
@@ -116,7 +154,10 @@ export class UsuariosService {
   }
 
   async remove(empresaId: string, id: string) {
-    await this.findOne(empresaId, id);
+    const actual = await this.findOne(empresaId, id);
+    if (esRolDePlataforma(actual.rol?.codigo)) {
+      throw new ForbiddenException(MSG_ROL_PLATAFORMA);
+    }
     await this.prisma.withTenant(empresaId, (tx) => tx.usuario.delete({ where: { id } }));
     return { id, eliminado: true };
   }

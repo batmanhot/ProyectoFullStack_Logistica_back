@@ -49,38 +49,45 @@ export class CreateNegocioDto {
   @IsString()
   notas?: string;
 
-  // ── Usuario administrador inicial del nuevo negocio (rol 'admin') ──
-  // La contraseña se usa UNA SOLA VEZ aquí, hasheada con bcrypt — nunca
-  // se almacena ni se devuelve en texto plano (decisión de seguridad de
-  // Fase 7d, no negociable).
+  // ── Usuario Propietario / Admin Owner del negocio (rol 'owner') — OBLIGATORIO ──
+  // docs/GOBIERNO-PLATAFORMA.md regla 3: todo negocio nace con al menos un
+  // Propietario. La contraseña se usa UNA SOLA VEZ acá, hasheada con bcrypt —
+  // nunca se almacena ni se devuelve en texto plano.
   @IsString()
   @IsNotEmpty()
-  adminNombre: string;
+  ownerNombre: string;
 
   @IsEmail()
-  adminEmail: string;
+  ownerEmail: string;
 
   @IsString()
   @MinLength(8)
-  adminPassword: string;
+  ownerPassword: string;
 
-  // ── Admin Owner opcional (regla de gobierno 2026-09-04: "hasta dos
-  // Administradores del Sistema — Owner y Tenant Admin, mínimo un Owner") ──
-  // Campos nuevos y opcionales a propósito: el panel clásico (AdminSaaS/)
-  // nunca los envía y sigue creando solo el usuario 'admin' de siempre, sin
-  // cambio de comportamiento. El panel V2 (AdminSaaSV2/) sí los completa,
-  // creando además un segundo usuario con rol 'owner'.
+  // Datos de perfil del Propietario (opcionales)
+  @IsOptional() @IsString() ownerTelefono?: string;
+  @IsOptional() @IsString() ownerDocumento?: string;
+  @IsOptional() @IsString() ownerCargo?: string;
+
+  // ── Administrador del Negocio / Admin Tenant (rol 'admin') — OPCIONAL ──
+  // El segundo (y último) usuario de gobierno del negocio. Si se envía uno de
+  // los 3 campos, se exigen los 3.
   @IsOptional()
   @IsString()
   @IsNotEmpty()
-  ownerNombre?: string;
+  adminNombre?: string;
 
   @IsOptional()
   @IsEmail()
-  ownerEmail?: string;
+  adminEmail?: string;
 
   @IsOptional()
   @IsString()
   @MinLength(8)
-  ownerPassword?: string;
+  adminPassword?: string;
+
+  // Datos de perfil del Administrador del Negocio (opcionales)
+  @IsOptional() @IsString() adminTelefono?: string;
+  @IsOptional() @IsString() adminDocumento?: string;
+  @IsOptional() @IsString() adminCargo?: string;
 }

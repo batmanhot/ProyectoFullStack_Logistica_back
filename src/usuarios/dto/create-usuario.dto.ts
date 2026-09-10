@@ -32,4 +32,9 @@ export class CreateUsuarioDto {
   @IsNumber()
   @Min(0)
   metaVentasMensual?: number;
+
+  /** Datos de perfil (2026-09-09) — opcionales. */
+  @IsOptional() @IsString() telefono?: string;
+  @IsOptional() @IsString() documento?: string;
+  @IsOptional() @IsString() cargo?: string;
 }

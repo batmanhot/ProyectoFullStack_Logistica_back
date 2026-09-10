@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Put, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, UseGuards, UseInterceptors } from '@nestjs/common';
 import { Public } from '../../common/decorators/public.decorator';
 import { PlatformAdminGuard } from '../../common/guards/platform-admin.guard';
 import { PlatformAuditInterceptor } from '../../common/interceptors/platform-audit.interceptor';
@@ -37,5 +37,10 @@ export class PlatformAdminsController {
     @CurrentPlatformAdmin() actor: PlatformAdminPayload,
   ) {
     return this.platformAdminsService.update(id, dto, actor.sub);
+  }
+
+  @Delete(':id')
+  remove(@Param('id') id: string, @CurrentPlatformAdmin() actor: PlatformAdminPayload) {
+    return this.platformAdminsService.remove(id, actor.sub);
   }
 }

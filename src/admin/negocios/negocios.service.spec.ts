@@ -6,137 +6,120 @@ describe('NegociosService.create', () => {
   let prismaMock: any;
   let service: NegociosService;
 
+  // rol.findFirst devuelve el rol base por su codigo (owner / admin).
+  const rolPorCodigo = ({ where }: any) =>
+    Promise.resolve(where?.codigo === 'owner' ? { id: 'rol-owner-global' } : { id: 'rol-admin-global' });
+
+  // DTO mínimo válido con el nuevo contrato: Propietario (owner) obligatorio.
+  const dtoOwner = {
+    codigo: 'nuevo-tenant',
+    nombre: 'Nuevo Tenant SAC',
+    ruc: '20999999999',
+    ownerNombre: 'Prop',
+    ownerEmail: 'prop@nuevo.demo',
+    ownerPassword: 'password123',
+  };
+
   beforeEach(() => {
     prismaMock = {
       planSaaS: { findUnique: vi.fn() },
-      rol: { findFirst: vi.fn() },
+      rol: { findFirst: vi.fn(rolPorCodigo) },
       $transaction: vi.fn(),
       activarTenantEnTransaccion: vi.fn().mockResolvedValue(undefined),
     };
     service = new NegociosService(prismaMock);
   });
 
-  it('rechaza si no existe el rol base "admin" (seed de Fase 1 no corrido)', async () => {
+  it('rechaza si no existe el rol base "owner" (seed no corrido)', async () => {
     prismaMock.rol.findFirst.mockResolvedValue(null);
-
-    await expect(
-      service.create({
-        codigo: 'nuevo-tenant',
-        nombre: 'Nuevo Tenant SAC',
-        ruc: '20999999999',
-        adminNombre: 'Admin',
-        adminEmail: 'admin@nuevo.demo',
-        adminPassword: 'password123',
-      } as any),
-    ).rejects.toThrow(BadRequestException);
+    await expect(service.create({ ...dtoOwner } as any)).rejects.toThrow(BadRequestException);
   });
 
   it('rechaza si el plan indicado no existe en el catálogo', async () => {
     prismaMock.planSaaS.findUnique.mockResolvedValue(null);
-
     await expect(
-      service.create({
-        codigo: 'nuevo-tenant',
-        nombre: 'Nuevo Tenant SAC',
-        ruc: '20999999999',
-        plan: 'plan-inexistente',
-        adminNombre: 'Admin',
-        adminEmail: 'admin@nuevo.demo',
-        adminPassword: 'password123',
-      } as any),
+      service.create({ ...dtoOwner, plan: 'plan-inexistente' } as any),
     ).rejects.toThrow(BadRequestException);
   });
 
-  it('crea la Empresa Y el Usuario admin inicial en la misma transacción, sin exponer la contraseña', async () => {
-    prismaMock.rol.findFirst.mockResolvedValue({ id: 'rol-admin-global' });
+  it('rechaza si se envía el Admin del Negocio a medias (falta email o password)', async () => {
+    await expect(
+      service.create({ ...dtoOwner, adminNombre: 'Solo nombre' } as any),
+    ).rejects.toThrow(BadRequestException);
+  });
 
+  it('crea la Empresa + el Propietario (rol owner) en la misma transacción, sin exponer la contraseña', async () => {
     const txMock = {
-      empresa: {
-        create: vi.fn().mockResolvedValue({ id: 'emp-1', codigo: 'nuevo-tenant', nombre: 'Nuevo Tenant SAC' }),
-      },
+      empresa: { create: vi.fn().mockResolvedValue({ id: 'emp-1', codigo: 'nuevo-tenant', nombre: 'Nuevo Tenant SAC' }), findUnique: vi.fn().mockResolvedValue({ plan: null }) },
+      planSaaS: { findUnique: vi.fn() },
+      usuario: { create: vi.fn().mockResolvedValue({ id: 'usr-1', nombre: 'Prop', email: 'prop@nuevo.demo' }), count: vi.fn().mockResolvedValue(0) },
+    };
+    prismaMock.$transaction.mockImplementation((fn: any) => fn(txMock));
+
+    const resultado = await service.create({ ...dtoOwner, codigo: 'NUEVO-TENANT' } as any);
+
+    expect(txMock.empresa.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ codigo: 'nuevo-tenant' }) }),
+    );
+    expect(prismaMock.activarTenantEnTransaccion).toHaveBeenCalledWith(txMock, 'emp-1');
+    expect(txMock.usuario.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ empresaId: 'emp-1', rolId: 'rol-owner-global' }),
+        select: { id: true, nombre: true, email: true }, // nunca selecciona passwordHash
+      }),
+    );
+    expect(txMock.usuario.create).toHaveBeenCalledTimes(1); // solo el Propietario
+    expect(resultado.usuarioOwner).toEqual({ id: 'usr-1', nombre: 'Prop', email: 'prop@nuevo.demo' });
+    expect((resultado as any).passwordHash).toBeUndefined();
+  });
+
+  it('crea también el Admin del Negocio (rol admin) si se envían sus 3 campos', async () => {
+    const txMock = {
+      empresa: { create: vi.fn().mockResolvedValue({ id: 'emp-1' }), findUnique: vi.fn().mockResolvedValue({ plan: null }) },
+      planSaaS: { findUnique: vi.fn() },
       usuario: {
-        create: vi.fn().mockResolvedValue({ id: 'usr-1', nombre: 'Admin', email: 'admin@nuevo.demo' }),
+        create: vi.fn()
+          .mockResolvedValueOnce({ id: 'usr-owner', nombre: 'Prop', email: 'prop@nuevo.demo' })
+          .mockResolvedValueOnce({ id: 'usr-admin', nombre: 'Admin', email: 'admin@nuevo.demo' }),
+        count: vi.fn().mockResolvedValue(0),
       },
     };
     prismaMock.$transaction.mockImplementation((fn: any) => fn(txMock));
 
     const resultado = await service.create({
-      codigo: 'NUEVO-TENANT', // debe normalizarse a minúscula
-      nombre: 'Nuevo Tenant SAC',
-      ruc: '20999999999',
+      ...dtoOwner,
       adminNombre: 'Admin',
       adminEmail: 'admin@nuevo.demo',
       adminPassword: 'password123',
     } as any);
 
-    expect(txMock.empresa.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ codigo: 'nuevo-tenant' }) }),
-    );
-    // Sin esto, el insert de abajo viola RLS (bug real: la tabla `usuarios`
-    // exige app.current_tenant activo, y create() no usa withTenant()).
-    expect(prismaMock.activarTenantEnTransaccion).toHaveBeenCalledWith(txMock, 'emp-1');
-    expect(txMock.usuario.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ empresaId: 'emp-1', rolId: 'rol-admin-global' }),
-        select: { id: true, nombre: true, email: true }, // nunca selecciona passwordHash
-      }),
-    );
-    expect(resultado.usuarioAdminInicial).toEqual({ id: 'usr-1', nombre: 'Admin', email: 'admin@nuevo.demo' });
-    expect((resultado as any).passwordHash).toBeUndefined();
+    expect(txMock.usuario.create).toHaveBeenCalledTimes(2);
+    expect(txMock.usuario.create).toHaveBeenNthCalledWith(1, expect.objectContaining({ data: expect.objectContaining({ rolId: 'rol-owner-global' }) }));
+    expect(txMock.usuario.create).toHaveBeenNthCalledWith(2, expect.objectContaining({ data: expect.objectContaining({ rolId: 'rol-admin-global' }) }));
+    expect(resultado.usuarioAdminInicial).toEqual({ id: 'usr-admin', nombre: 'Admin', email: 'admin@nuevo.demo' });
   });
 
   it('traduce el error P2002 (codigo/ruc duplicado) a un mensaje claro', async () => {
-    prismaMock.rol.findFirst.mockResolvedValue({ id: 'rol-admin-global' });
     prismaMock.$transaction.mockRejectedValue({ code: 'P2002' });
-
-    await expect(
-      service.create({
-        codigo: 'dlnorte',
-        nombre: 'Duplicado',
-        ruc: '20100000001',
-        adminNombre: 'Admin',
-        adminEmail: 'admin@dup.demo',
-        adminPassword: 'password123',
-      } as any),
-    ).rejects.toThrow(BadRequestException);
+    await expect(service.create({ ...dtoOwner, codigo: 'dlnorte' } as any)).rejects.toThrow(BadRequestException);
   });
 
   it('el mensaje del P2002 nombra el campo concreto que chocó (RUC vs slug)', async () => {
-    prismaMock.rol.findFirst.mockResolvedValue({ id: 'rol-admin-global' });
-    // Prisma/Postgres pone en meta.target los nombres de campo del modelo.
     prismaMock.$transaction.mockRejectedValue({ code: 'P2002', meta: { target: ['ruc'] } });
-
-    const dto = {
-      codigo: 'abc',
-      nombre: 'Empresa ABC SAC',
-      ruc: '20123456789',
-      adminNombre: 'Admin',
-      adminEmail: 'admin@abc.demo',
-      adminPassword: 'password123',
-    } as any;
-
-    // El slug 'abc' está libre; lo que choca es el RUC — el mensaje debe decirlo.
+    const dto = { ...dtoOwner, codigo: 'abc', ruc: '20123456789' } as any;
     await expect(service.create(dto)).rejects.toThrow(/RUC/i);
     await expect(service.create(dto)).rejects.not.toThrow(/slug/i);
   });
 
-  it('pasa el estado (ej. "trial") a la Empresa creada — para que una empresa de prueba nazca como trial, no como "activo" por default', async () => {
-    prismaMock.rol.findFirst.mockResolvedValue({ id: 'rol-admin-global' });
+  it('pasa el estado (ej. "trial") a la Empresa creada', async () => {
     const txMock = {
-      empresa: { create: vi.fn().mockResolvedValue({ id: 'emp-1' }) },
-      usuario: { create: vi.fn().mockResolvedValue({ id: 'usr-1', nombre: 'Admin', email: 'admin@nuevo.demo' }) },
+      empresa: { create: vi.fn().mockResolvedValue({ id: 'emp-1' }), findUnique: vi.fn().mockResolvedValue({ plan: null }) },
+      planSaaS: { findUnique: vi.fn() },
+      usuario: { create: vi.fn().mockResolvedValue({ id: 'usr-1', nombre: 'Prop', email: 'prop@nuevo.demo' }), count: vi.fn().mockResolvedValue(0) },
     };
     prismaMock.$transaction.mockImplementation((fn: any) => fn(txMock));
 
-    await service.create({
-      codigo: 'empresa-vacia',
-      nombre: 'Empresa de Prueba',
-      ruc: '20999999998',
-      estado: 'trial',
-      adminNombre: 'Admin',
-      adminEmail: 'admin@nuevo.demo',
-      adminPassword: 'password123',
-    } as any);
+    await service.create({ ...dtoOwner, codigo: 'empresa-vacia', estado: 'trial' } as any);
 
     expect(txMock.empresa.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ estado: 'trial' }) }),
@@ -151,10 +134,12 @@ describe('NegociosService.update', () => {
 
   beforeEach(() => {
     txMock = {
-      empresa: { update: vi.fn().mockResolvedValue({ id: 'e1' }) },
+      empresa: { update: vi.fn().mockResolvedValue({ id: 'e1' }), findUnique: vi.fn().mockResolvedValue({ plan: null }) },
+      planSaaS: { findUnique: vi.fn() },
       usuario: {
-        findFirst: vi.fn().mockResolvedValue({ id: 'usr-admin', empresaId: 'e1' }),
+        findFirst: vi.fn().mockResolvedValue({ id: 'usr-admin', empresaId: 'e1', activo: true }),
         update: vi.fn().mockResolvedValue({ id: 'usr-admin' }),
+        count: vi.fn().mockResolvedValue(0),
       },
     };
 
@@ -196,6 +181,19 @@ describe('NegociosService.update', () => {
         }),
       }),
     );
+  });
+
+  it('NO intenta crear el admin si solo llegan datos de perfil sueltos (sin nombre/email/password)', async () => {
+    prismaMock.empresa.findUnique.mockResolvedValue({ id: 'e1' });
+    txMock.empresa.update.mockResolvedValue({ id: 'e1' });
+    txMock.usuario.findFirst.mockResolvedValue(null); // no existe admin
+    txMock.rol = { findFirst: vi.fn() };
+    txMock.usuario.create = vi.fn();
+
+    await service.update('e1', { nombre: 'Negocio X', adminTelefono: '999', adminCargo: 'Jefe' } as any);
+
+    expect(txMock.usuario.create).not.toHaveBeenCalled();
+    expect(txMock.rol.findFirst).not.toHaveBeenCalled();
   });
 
   it('crea el usuario administrador si el negocio no tenía uno asociado y se envían credenciales nuevas', async () => {
@@ -321,6 +319,42 @@ describe('NegociosService.findAll / findOne — estadoEfectivo', () => {
     expect(negocio.ultimoAcceso).toBeNull();
     expect(negocio.estadoEfectivo).toBe('activo');
   });
+
+  // Regresión: `usuarios` tiene RLS por tenant. findOne/findAll leen al
+  // Propietario y al Admin del Negocio dentro de withTenant() — sin eso el
+  // panel del SuperAdmin recibía owner nulo / 0 usuarios aunque los datos
+  // estuvieran guardados.
+  const txConGobierno = () => ({
+    usuario: {
+      findFirst: vi.fn().mockResolvedValue({ id: 'u-owner', nombre: 'Prop', email: 'prop@x.com' }),
+      findMany: vi.fn().mockResolvedValue([{ id: 'u-admin', nombre: 'Adm', email: 'adm@x.com' }]),
+      count: vi.fn().mockResolvedValue(2),
+    },
+    auditoria: { findFirst: vi.fn().mockResolvedValue({ timestamp: new Date('2026-09-08T10:00:00Z') }) },
+  });
+
+  it('findOne lee al Propietario/Admin dentro de withTenant (RLS de `usuarios`)', async () => {
+    prismaMock.empresa.findUnique.mockResolvedValue({ id: 'e1', nombre: 'X', estado: 'activo', fechaVencimiento: null });
+    prismaMock.withTenant.mockImplementation((_id: string, fn: any) => fn(txConGobierno()));
+
+    const negocio = await service.findOne('e1');
+
+    expect(negocio.usuarioOwner).toEqual({ id: 'u-owner', nombre: 'Prop', email: 'prop@x.com' });
+    expect(negocio.usuarios).toEqual([{ id: 'u-admin', nombre: 'Adm', email: 'adm@x.com' }]);
+    expect(negocio._count.usuarios).toBe(2);
+  });
+
+  it('findAll resuelve usuarioOwner/usuarios por empresa dentro de withTenant', async () => {
+    prismaMock.empresa.findMany.mockResolvedValue([
+      { id: 'e1', nombre: 'X', estado: 'activo', fechaVencimiento: null },
+    ]);
+    prismaMock.withTenant.mockImplementation((_id: string, fn: any) => fn(txConGobierno()));
+
+    const [negocio] = await service.findAll();
+
+    expect(negocio.usuarioOwner).toEqual({ id: 'u-owner', nombre: 'Prop', email: 'prop@x.com' });
+    expect(negocio.usuarios).toEqual([{ id: 'u-admin', nombre: 'Adm', email: 'adm@x.com' }]);
+  });
 });
 
 describe('NegociosService.archivar ("eliminar definitivamente")', () => {
@@ -351,5 +385,45 @@ describe('NegociosService.archivar ("eliminar definitivamente")', () => {
       where: { id: 'e1' },
       data: { activo: false, estado: 'archivado' },
     });
+  });
+});
+
+describe('NegociosService.vista360', () => {
+  let prisma: any;
+  let service: NegociosService;
+
+  beforeEach(() => {
+    prisma = {
+      empresa: { findUnique: vi.fn() },
+      planSaaS: { findUnique: vi.fn() },
+      renovacionPlan: { findMany: vi.fn().mockResolvedValue([]) },
+      facturaSaaS: { groupBy: vi.fn().mockResolvedValue([]), aggregate: vi.fn().mockResolvedValue({ _sum: { total: 0 }, _count: 0 }) },
+      respaldoNegocio: { findFirst: vi.fn().mockResolvedValue(null), count: vi.fn().mockResolvedValue(0) },
+      solicitudRestauracion: { count: vi.fn().mockResolvedValue(0) },
+      withTenant: vi.fn(async (_id: string, fn: any) =>
+        fn({
+          usuario: { findFirst: vi.fn().mockResolvedValue(null), count: vi.fn().mockResolvedValue(0) },
+          auditoria: { findFirst: vi.fn().mockResolvedValue(null) },
+        }),
+      ),
+    };
+    service = new NegociosService(prisma);
+  });
+
+  it('404 si el negocio no existe', async () => {
+    prisma.empresa.findUnique.mockResolvedValue(null);
+    await expect(service.vista360('x')).rejects.toThrow(/no encontrado/i);
+  });
+
+  it('sin señales cuando todo está sano; señal crítica cuando el plan está vencido', async () => {
+    const base = { id: 'e1', nombre: 'A', codigo: 'a', ruc: '20x', email: 'a@a.com', origen: 'admin_saas', createdAt: new Date() };
+    prisma.empresa.findUnique.mockResolvedValue({ ...base, estado: 'activo', fechaVencimiento: new Date(Date.now() + 60 * 86400000), plan: null });
+    prisma.respaldoNegocio.findFirst.mockResolvedValue({ createdAt: new Date(), estado: 'COMPLETADO', integridad: 'VERIFICADO', formato: null, origen: 'manual' });
+    const sano = await service.vista360('e1');
+    expect(sano.senales).toEqual([]);
+
+    prisma.empresa.findUnique.mockResolvedValue({ ...base, estado: 'activo', fechaVencimiento: new Date(Date.now() - 10 * 86400000), plan: null });
+    const vencido = await service.vista360('e1');
+    expect(vencido.senales.some((s: any) => s.tipo === 'plan' && s.nivel === 'critica')).toBe(true);
   });
 });

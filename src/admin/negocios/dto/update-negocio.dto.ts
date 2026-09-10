@@ -45,31 +45,21 @@ export class UpdateNegocioDto {
   @IsString()
   notas?: string;
 
-  // ── Usuario administrador del negocio ──
-  @IsOptional()
-  @IsString()
-  adminNombre?: string;
+  // ── Administrador del Negocio (rol 'admin') ──
+  @IsOptional() @IsString() adminNombre?: string;
+  @IsOptional() @IsEmail() adminEmail?: string;
+  @IsOptional() @IsString() @MinLength(8) adminPassword?: string;
+  @IsOptional() @IsString() adminTelefono?: string;
+  @IsOptional() @IsString() adminDocumento?: string;
+  @IsOptional() @IsString() adminCargo?: string;
+  @IsOptional() @IsBoolean() adminActivo?: boolean;
 
-  @IsOptional()
-  @IsEmail()
-  adminEmail?: string;
-
-  @IsOptional()
-  @IsString()
-  @MinLength(8)
-  adminPassword?: string;
-
-  // ── Admin Owner opcional (ver create-negocio.dto.ts) ──
-  @IsOptional()
-  @IsString()
-  ownerNombre?: string;
-
-  @IsOptional()
-  @IsEmail()
-  ownerEmail?: string;
-
-  @IsOptional()
-  @IsString()
-  @MinLength(8)
-  ownerPassword?: string;
+  // ── Propietario / Admin Owner (rol 'owner') ──
+  @IsOptional() @IsString() ownerNombre?: string;
+  @IsOptional() @IsEmail() ownerEmail?: string;
+  @IsOptional() @IsString() @MinLength(8) ownerPassword?: string;
+  @IsOptional() @IsString() ownerTelefono?: string;
+  @IsOptional() @IsString() ownerDocumento?: string;
+  @IsOptional() @IsString() ownerCargo?: string;
+  @IsOptional() @IsBoolean() ownerActivo?: boolean;
 }

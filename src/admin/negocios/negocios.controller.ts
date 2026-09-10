@@ -24,6 +24,12 @@ export class NegociosController {
     return this.negociosService.findOne(id);
   }
 
+  /** Vista 360°: estado + plan + equipo + ingresos + facturación + backups + señales. */
+  @Get(':id/vista-360')
+  vista360(@Param('id') id: string) {
+    return this.negociosService.vista360(id);
+  }
+
   @Post()
   create(@Body() dto: CreateNegocioDto) {
     return this.negociosService.create(dto);

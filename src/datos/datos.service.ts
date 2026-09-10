@@ -546,11 +546,15 @@ export class DatosService {
     ]);
 
     // ── Usuarios demo ya sembrados por prisma/seed.ts — solo lookup ────────
-    const [usrSolicitante, usrAdmin, usrAlmacenero] = await Promise.all([
+    // 'admin' cae a 'owner' si el negocio no tiene Admin del Negocio
+    // (docs/GOBIERNO-PLATAFORMA.md regla 3: el 'admin' es opcional).
+    const [usrSolicitante, usrAdminOAdmin, usrOwner, usrAlmacenero] = await Promise.all([
       tx.usuario.findFirst({ where: { empresaId, rol: { codigo: 'solicitante' } } }),
       tx.usuario.findFirst({ where: { empresaId, rol: { codigo: 'admin' } } }),
+      tx.usuario.findFirst({ where: { empresaId, rol: { codigo: 'owner' } } }),
       tx.usuario.findFirst({ where: { empresaId, rol: { codigo: 'almacenero' } } }),
     ]);
+    const usrAdmin = usrAdminOAdmin ?? usrOwner;
 
     // ── Usuario Chofer — se asegura en cada "Restaurar Demo" ───────────────
     // El rol 'chofer' depende de un Transportista (Usuario.transportistaId).
