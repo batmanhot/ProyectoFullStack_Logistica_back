@@ -19,6 +19,25 @@ export const RT_COOKIE = {
   portalProveedor: { nombre: 'sp_portal_prov_rt', path: '/api/portal-proveedor' },
 } as const;
 
+/**
+ * Nombre de la cookie de refresh de un tenant: UNA POR EMPRESA. Así conviven en
+ * el mismo navegador varias sesiones de negocio distintas (una por pestaña) sin
+ * pisarse — antes `sp_rt` era único y el último login ganaba. El id de empresa
+ * ya viene validado como `/^[a-z0-9]+$/i` (tenantContextSql), pero se sanea
+ * igual por defensa en profundidad.
+ */
+export function nombreCookieTenant(empresaId: string): string {
+  const safe = String(empresaId || '')
+    .replace(/[^a-z0-9]/gi, '')
+    .slice(0, 40);
+  return `sp_rt_${safe}`;
+}
+
+/** cfg de `setRefreshCookie`/`clearRefreshCookie` para el tenant `empresaId`. */
+export function cookieTenant(empresaId: string): { nombre: string; path: string } {
+  return { nombre: nombreCookieTenant(empresaId), path: RT_COOKIE.tenant.path };
+}
+
 /** Convierte '7d' / '30d' / '900s' / '15m' a segundos. */
 export function expEnSegundos(exp: string | undefined, fallbackSeg: number): number {
   if (!exp) return fallbackSeg;

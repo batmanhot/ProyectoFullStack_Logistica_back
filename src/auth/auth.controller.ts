@@ -17,8 +17,9 @@ import { CurrentUser, TenantId } from '../common/decorators/tenant.decorator';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { DemoLoginDto } from './dto/demo-login.dto';
+import { RefreshDto } from './dto/refresh.dto';
 import { JwtPayload } from '../common/guards/jwt-auth.guard';
-import { RT_COOKIE, clearRefreshCookie, expEnSegundos, setRefreshCookie } from '../common/utils/auth-cookies';
+import { clearRefreshCookie, cookieTenant, expEnSegundos, nombreCookieTenant, setRefreshCookie } from '../common/utils/auth-cookies';
 
 const RT_MAX_AGE = () => expEnSegundos(process.env.JWT_REFRESH_EXPIRES_IN, 7 * 86400);
 
@@ -27,9 +28,11 @@ const RT_MAX_AGE = () => expEnSegundos(process.env.JWT_REFRESH_EXPIRES_IN, 7 * 8
  * completo para respetar literalmente el contrato de la sección 6.3
  * (GET /api/empresas/:codigo, POST /api/auth/login, POST /api/auth/refresh).
  *
- * #5 (2026-09-10): el refresh token se emite como cookie httpOnly (`sp_rt`,
- * path `/api/auth`), no en el body. El access token (corto) sí va en el body
- * y el frontend lo tiene en memoria, no en localStorage.
+ * #5 (2026-09-10): el refresh token se emite como cookie httpOnly
+ * (`sp_rt_<empresaId>`, una por negocio, path `/api/auth`), no en el body. El
+ * access token (corto) sí va en el body y el frontend lo tiene en memoria, no
+ * en localStorage. Cookie por empresa → varias sesiones de negocio conviven en
+ * el mismo navegador (una por pestaña).
  */
 @Controller()
 export class AuthController {
@@ -53,7 +56,7 @@ export class AuthController {
       dto.email,
       dto.password,
     );
-    setRefreshCookie(res, RT_COOKIE.tenant, refreshToken, RT_MAX_AGE());
+    setRefreshCookie(res, cookieTenant(dto.empresaId), refreshToken, RT_MAX_AGE());
     return { accessToken, usuario };
   }
 
@@ -64,11 +67,20 @@ export class AuthController {
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @Post('auth/refresh')
   @HttpCode(HttpStatus.OK)
-  async refresh(@Req() req: FastifyRequest, @Res({ passthrough: true }) res: FastifyReply) {
-    const rt = req.cookies?.[RT_COOKIE.tenant.nombre];
+  async refresh(
+    @Body() dto: RefreshDto,
+    @Req() req: FastifyRequest,
+    @Res({ passthrough: true }) res: FastifyReply,
+  ) {
+    const rt = req.cookies?.[nombreCookieTenant(dto.empresaId)];
     if (!rt) throw new UnauthorizedException('No hay sesión activa');
     const { accessToken, refreshToken, usuario } = await this.authService.refresh(rt);
-    setRefreshCookie(res, RT_COOKIE.tenant, refreshToken, RT_MAX_AGE());
+    // La cookie va por empresa, pero se verifica igual que el token pertenece a
+    // la que la pestaña dice ser — que un `sp_rt_*` de otro negocio no sirva acá.
+    if (usuario.empresaId !== dto.empresaId) {
+      throw new UnauthorizedException('La sesión no corresponde a esta empresa');
+    }
+    setRefreshCookie(res, cookieTenant(dto.empresaId), refreshToken, RT_MAX_AGE());
     return { accessToken, usuario };
   }
 
@@ -81,7 +93,7 @@ export class AuthController {
       dto.empresaId,
       dto.usuarioId,
     );
-    setRefreshCookie(res, RT_COOKIE.tenant, refreshToken, RT_MAX_AGE());
+    setRefreshCookie(res, cookieTenant(dto.empresaId), refreshToken, RT_MAX_AGE());
     return { accessToken, usuario };
   }
 
@@ -96,7 +108,7 @@ export class AuthController {
     @CurrentUser() user: JwtPayload,
     @Res({ passthrough: true }) res: FastifyReply,
   ) {
-    clearRefreshCookie(res, RT_COOKIE.tenant);
+    clearRefreshCookie(res, cookieTenant(empresaId));
     await this.authService.logout(empresaId, user.sub);
   }
 
