@@ -1,26 +1,28 @@
-import {
-  BadRequestException,
-  ConflictException,
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateRolDto } from './dto/create-rol.dto';
-import { UpdateRolDto } from './dto/update-rol.dto';
 
+/**
+ * SOLO LECTURA desde el tenant (2026-09-10). Crear / editar / eliminar roles
+ * —base y propios del negocio— se hace únicamente desde el panel SuperAdmin
+ * (`AdminRolesBaseService`, `/admin/roles-base`). Aquí solo se listan para
+ * asignarlos a usuarios y se resuelve `verificarPermiso` para los guards.
+ */
 @Injectable()
 export class RolesService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * La política RLS de "roles" ya filtra: catálogo base (empresaId null)
-   * + roles personalizados de este tenant. No se necesita un OR explícito
-   * aquí — es exactamente la garantía que pide el hallazgo #4.
+   * SOLO el catálogo del SuperAdmin (`empresaId null`). El negocio nunca ve
+   * (ni tiene) roles propios: todo el catálogo se gobierna desde
+   * `/admin/roles-base`. Si un tenant arrastrara un rol `esPersonalizado`
+   * de antes de este corte, no aparece aquí — sigue funcionando para los
+   * usuarios ya asignados (`verificarPermiso` resuelve por `rolId`) hasta
+   * que el SuperAdmin lo migre.
    */
   findAll(empresaId: string) {
     return this.prisma.withTenant(empresaId, (tx) =>
       tx.rol.findMany({
+        where: { empresaId: null },
         include: { permisos: { select: { modulo: true } } },
         orderBy: [{ label: 'asc' }],
       }),
@@ -43,56 +45,6 @@ export class RolesService {
     );
     if (!rol) throw new NotFoundException('Rol no encontrado');
     return rol;
-  }
-
-  async create(empresaId: string, dto: CreateRolDto) {
-    try {
-      return await this.prisma.withTenant(empresaId, (tx) =>
-        tx.rol.create({
-          data: {
-            empresaId,
-            codigo: dto.codigo,
-            label: dto.label,
-            esPersonalizado: true,
-            permisos: { create: dto.permisos.map((modulo) => ({ modulo })) },
-          },
-          include: { permisos: { select: { modulo: true } } },
-        }),
-      );
-    } catch (e: any) {
-      if (e.code === 'P2002') {
-        throw new ConflictException('Ya existe un rol con ese código en esta empresa');
-      }
-      throw e;
-    }
-  }
-
-  async update(empresaId: string, id: string, dto: UpdateRolDto) {
-    const rol = await this.findOne(empresaId, id);
-    this.asegurarRolPropio(rol, empresaId);
-
-    return this.prisma.withTenant(empresaId, async (tx) => {
-      if (dto.permisos) {
-        await tx.permiso.deleteMany({ where: { rolId: id } });
-      }
-      return tx.rol.update({
-        where: { id },
-        data: {
-          ...(dto.label !== undefined && { label: dto.label }),
-          ...(dto.permisos !== undefined && {
-            permisos: { create: dto.permisos.map((modulo) => ({ modulo })) },
-          }),
-        },
-        include: { permisos: { select: { modulo: true } } },
-      });
-    });
-  }
-
-  async remove(empresaId: string, id: string) {
-    const rol = await this.findOne(empresaId, id);
-    this.asegurarRolPropio(rol, empresaId);
-    await this.prisma.withTenant(empresaId, (tx) => tx.rol.delete({ where: { id } }));
-    return { id, eliminado: true };
   }
 
   /**
@@ -119,14 +71,5 @@ export class RolesService {
     const viaComodin = rol.permisos.some((p) => p.modulo === '*');
     const permitido = viaComodin || rol.permisos.some((p) => p.modulo === modulo);
     return { permitido, viaComodin };
-  }
-
-  /** El catálogo base (empresaId null) y los roles de otro tenant son intocables vía API. */
-  private asegurarRolPropio(rol: { empresaId: string | null }, empresaId: string) {
-    if (rol.empresaId !== empresaId) {
-      throw new ForbiddenException(
-        'No se puede modificar ni eliminar un rol del catálogo base',
-      );
-    }
   }
 }

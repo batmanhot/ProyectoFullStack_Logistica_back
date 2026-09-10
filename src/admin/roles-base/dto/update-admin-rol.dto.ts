@@ -6,6 +6,10 @@ export class UpdateAdminRolDto {
   label?: string;
 
   @IsOptional()
+  @IsString()
+  descripcion?: string;
+
+  @IsOptional()
   @IsArray()
   @ArrayNotEmpty()
   @IsString({ each: true })

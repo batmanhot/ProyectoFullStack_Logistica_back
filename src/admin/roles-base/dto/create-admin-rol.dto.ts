@@ -1,4 +1,4 @@
-import { ArrayNotEmpty, IsArray, IsNotEmpty, IsString, Matches } from 'class-validator';
+import { ArrayNotEmpty, IsArray, IsNotEmpty, IsOptional, IsString, Matches } from 'class-validator';
 
 /** Crea un rol del CATÁLOGO BASE (empresaId null) — plantilla heredable por todos los tenants. */
 export class CreateAdminRolDto {
@@ -10,6 +10,10 @@ export class CreateAdminRolDto {
   @IsString()
   @IsNotEmpty()
   label: string;
+
+  @IsOptional()
+  @IsString()
+  descripcion?: string;
 
   @IsArray()
   @ArrayNotEmpty()
