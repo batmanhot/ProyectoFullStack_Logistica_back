@@ -3,6 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { ValidationPipe } from '@nestjs/common';
 import fastifyHelmet from '@fastify/helmet';
+import fastifyCookie from '@fastify/cookie';
 import { AppModule } from './app.module';
 import { ResponseEnvelopeInterceptor } from './common/interceptors/response-envelope.interceptor';
 import { validateJwtSecrets } from './common/utils/validate-secrets.util';
@@ -41,6 +42,12 @@ async function bootstrap() {
     // frontend (otro origin) sí debe poder leer las respuestas.
     crossOriginResourcePolicy: { policy: 'cross-origin' },
   });
+
+  // #5 (2026-09-10): el refresh token viaja en cookie httpOnly (no en el JSON
+  // ni en localStorage) — un XSS ya no puede robarlo. Ver auth.controller /
+  // admin-auth.controller. `signed:false`: no se firma la cookie, el valor ES
+  // un JWT ya firmado.
+  await app.register(fastifyCookie);
 
   // Todas las rutas del contrato (sección 6) están bajo /api/...
   app.setGlobalPrefix('api');

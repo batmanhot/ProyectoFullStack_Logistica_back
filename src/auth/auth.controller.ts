@@ -1,17 +1,35 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  Req,
+  Res,
+  UnauthorizedException,
+} from '@nestjs/common';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../common/decorators/public.decorator';
 import { CurrentUser, TenantId } from '../common/decorators/tenant.decorator';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
-import { RefreshDto } from './dto/refresh.dto';
 import { DemoLoginDto } from './dto/demo-login.dto';
 import { JwtPayload } from '../common/guards/jwt-auth.guard';
+import { RT_COOKIE, clearRefreshCookie, expEnSegundos, setRefreshCookie } from '../common/utils/auth-cookies';
+
+const RT_MAX_AGE = () => expEnSegundos(process.env.JWT_REFRESH_EXPIRES_IN, 7 * 86400);
 
 /**
  * Sin prefijo propio: los paths de cada método ya incluyen el segmento
  * completo para respetar literalmente el contrato de la sección 6.3
  * (GET /api/empresas/:codigo, POST /api/auth/login, POST /api/auth/refresh).
+ *
+ * #5 (2026-09-10): el refresh token se emite como cookie httpOnly (`sp_rt`,
+ * path `/api/auth`), no en el body. El access token (corto) sí va en el body
+ * y el frontend lo tiene en memoria, no en localStorage.
  */
 @Controller()
 export class AuthController {
@@ -29,36 +47,54 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('auth/login')
   @HttpCode(HttpStatus.OK)
-  login(@Body() dto: LoginDto) {
-    return this.authService.login(dto.empresaId, dto.email, dto.password);
+  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: FastifyReply) {
+    const { accessToken, refreshToken, usuario } = await this.authService.login(
+      dto.empresaId,
+      dto.email,
+      dto.password,
+    );
+    setRefreshCookie(res, RT_COOKIE.tenant, refreshToken, RT_MAX_AGE());
+    return { accessToken, usuario };
   }
 
   @Public()
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post('auth/refresh')
   @HttpCode(HttpStatus.OK)
-  refresh(@Body() dto: RefreshDto) {
-    return this.authService.refresh(dto.refreshToken);
+  async refresh(@Req() req: FastifyRequest, @Res({ passthrough: true }) res: FastifyReply) {
+    const rt = req.cookies?.[RT_COOKIE.tenant.nombre];
+    if (!rt) throw new UnauthorizedException('No hay sesión activa');
+    const { accessToken, refreshToken, usuario } = await this.authService.refresh(rt);
+    setRefreshCookie(res, RT_COOKIE.tenant, refreshToken, RT_MAX_AGE());
+    return { accessToken, usuario };
   }
 
   @Public()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('auth/demo-login')
   @HttpCode(HttpStatus.OK)
-  demoLogin(@Body() dto: DemoLoginDto) {
-    return this.authService.demoLogin(dto.empresaId, dto.usuarioId);
+  async demoLogin(@Body() dto: DemoLoginDto, @Res({ passthrough: true }) res: FastifyReply) {
+    const { accessToken, refreshToken, usuario } = await this.authService.demoLogin(
+      dto.empresaId,
+      dto.usuarioId,
+    );
+    setRefreshCookie(res, RT_COOKIE.tenant, refreshToken, RT_MAX_AGE());
+    return { accessToken, usuario };
   }
 
   /**
-   * Hallazgo Alto #6 (auditoría 2026-07-29): antes no existía forma de revocar
-   * un refresh token antes de su expiración natural (7 días) — ni logout.
-   * Incrementa Usuario.tokenVersion: todo refresh token emitido antes de este
-   * momento deja de servir de inmediato (ver AuthService.refresh/logout).
+   * Hallazgo Alto #6 (auditoría 2026-07-29): incrementa Usuario.tokenVersion,
+   * lo que invalida todo refresh token emitido antes. Además borra la cookie.
    */
   @Post('auth/logout')
   @HttpCode(HttpStatus.NO_CONTENT)
-  logout(@TenantId() empresaId: string, @CurrentUser() user: JwtPayload) {
-    return this.authService.logout(empresaId, user.sub);
+  async logout(
+    @TenantId() empresaId: string,
+    @CurrentUser() user: JwtPayload,
+    @Res({ passthrough: true }) res: FastifyReply,
+  ) {
+    clearRefreshCookie(res, RT_COOKIE.tenant);
+    await this.authService.logout(empresaId, user.sub);
   }
 
   /** Vista 360° del usuario autenticado (Mi Perfil). Cualquier usuario logueado; solo lectura. */
