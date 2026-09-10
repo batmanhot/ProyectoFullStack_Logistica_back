@@ -17,6 +17,11 @@ export class RenovacionesService {
       },
       include: { empresa: { select: { nombre: true, codigo: true } }, plan: { select: { nombre: true } } },
       orderBy: { fechaPago: 'desc' },
+      // Tope de seguridad: el panel consume esto como array (Suscripciones,
+      // Facturación, Dashboard). Sin paginación server-side todavía; las 500
+      // más recientes cubren de sobra la vista. Filtrar por `empresaId` para
+      // el histórico completo de un negocio.
+      take: 500,
     });
   }
 

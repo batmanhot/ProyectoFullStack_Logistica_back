@@ -1,5 +1,4 @@
 import {
-  ArrayNotEmpty,
   IsArray,
   IsBoolean,
   IsIn,
@@ -52,9 +51,9 @@ export class UpdatePlanDto {
   @Min(1)
   vigenciaDias?: number;
 
+  // Puede quedar vacía (ver CreatePlanDto).
   @IsOptional()
   @IsArray()
-  @ArrayNotEmpty()
   @IsString({ each: true })
   caracteristicas?: string[];
 

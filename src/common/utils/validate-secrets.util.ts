@@ -1,10 +1,10 @@
 /**
  * Hallazgo Crítico #5 (auditoría de seguridad 2026-07-29): el .env llegó a
- * tener los 4 secretos JWT todavía en sus valores de plantilla de
+ * tener los secretos JWT todavía en sus valores de plantilla de
  * .env.example, sin que nada lo detectara en el arranque. Esta validación
  * corre en bootstrap() antes de levantar el servidor — si algún secreto es
  * un placeholder conocido, está vacío, es demasiado corto, o coincide con
- * otro de los cuatro (deben ser servidores/audiencias distintas), el
+ * otro de los cinco (deben ser servidores/audiencias distintas), el
  * arranque falla con un mensaje explícito en vez de servir tráfico con
  * tokens forjables.
  */
@@ -14,13 +14,20 @@ const PLACEHOLDERS = new Set([
   'cambia-este-otro-valor-en-produccion',
   'cambia-este-valor-tambien-distinto-al-de-arriba',
   'cambia-este-valor-tambien-distinto-a-los-dos-de-arriba',
+  'cambia-este-valor-distinto-a-los-otros-cuatro',
   'elige-un-valor-distinto-al-de-JWT_SECRET',
   'elige-un-valor-distinto-a-los-otros-dos',
 ]);
 
 const MIN_LENGTH = 20;
 
-const SECRET_VARS = ['JWT_SECRET', 'JWT_REFRESH_SECRET', 'ADMIN_JWT_SECRET', 'PORTAL_JWT_SECRET'] as const;
+const SECRET_VARS = [
+  'JWT_SECRET',
+  'JWT_REFRESH_SECRET',
+  'ADMIN_JWT_SECRET',
+  'ADMIN_JWT_REFRESH_SECRET',
+  'PORTAL_JWT_SECRET',
+] as const;
 
 export function validateJwtSecrets(env: NodeJS.ProcessEnv = process.env): void {
   const valores = new Map<string, string>();

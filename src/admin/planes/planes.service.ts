@@ -1,5 +1,6 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { relanzarP2002 } from '../../common/utils/prisma-error.util';
 import { CreatePlanDto } from './dto/create-plan.dto';
 import { UpdatePlanDto } from './dto/update-plan.dto';
 
@@ -27,11 +28,8 @@ export class PlanesService {
   async create(dto: CreatePlanDto) {
     try {
       return await this.prisma.planSaaS.create({ data: dto });
-    } catch (e: any) {
-      if (e.code === 'P2002') {
-        throw new BadRequestException(`Ya existe un plan con id "${dto.id}"`);
-      }
-      throw e;
+    } catch (e) {
+      relanzarP2002(e, { id: `Ya existe un plan con id "${dto.id}"` });
     }
   }
 

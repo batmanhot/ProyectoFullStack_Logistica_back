@@ -17,8 +17,12 @@ describe('AdminAuthService', () => {
   beforeEach(() => {
     prisma = {
       platformAdmin: { findUnique: vi.fn() },
+      auditoriaPlataforma: { create: vi.fn().mockResolvedValue({}) },
     };
-    jwt = { signAsync: vi.fn().mockResolvedValue('jwt.token.here') };
+    jwt = {
+      signAsync: vi.fn().mockResolvedValue('jwt.token.here'),
+      verifyAsync: vi.fn(),
+    };
     service = new AdminAuthService(prisma, jwt);
     vi.mocked(bcrypt.compare).mockReset();
   });
@@ -41,13 +45,38 @@ describe('AdminAuthService', () => {
     await expect(service.login('a@a.com', 'mal')).rejects.toThrow(UnauthorizedException);
   });
 
-  it('devuelve accessToken y datos del admin en login exitoso', async () => {
+  it('devuelve accessToken, refreshToken y datos del admin en login exitoso', async () => {
     const admin = { id: 'a1', activo: true, email: 'a@a.com', nombre: 'Admin One', passwordHash: '$hash$' };
     prisma.platformAdmin.findUnique.mockResolvedValue(admin);
     vi.mocked(bcrypt.compare).mockResolvedValue(true as never);
 
     const r = await service.login('a@a.com', 'correcto');
     expect(r.accessToken).toBe('jwt.token.here');
+    expect(r.refreshToken).toBe('jwt.token.here');
+    expect(jwt.signAsync).toHaveBeenCalledTimes(2); // access + refresh, secretos distintos
     expect(r.admin).toEqual({ id: 'a1', email: 'a@a.com', nombre: 'Admin One' });
+  });
+
+  describe('refresh', () => {
+    it('lanza UnauthorizedException si el refresh token no verifica', async () => {
+      jwt.verifyAsync.mockRejectedValue(new Error('bad token'));
+      await expect(service.refresh('roto')).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('lanza UnauthorizedException si la cuenta ya no está activa', async () => {
+      jwt.verifyAsync.mockResolvedValue({ sub: 'a1', email: 'a@a.com' });
+      prisma.platformAdmin.findUnique.mockResolvedValue({ id: 'a1', activo: false });
+      await expect(service.refresh('valido')).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('emite un par nuevo sin auditar cuando el refresh es válido', async () => {
+      jwt.verifyAsync.mockResolvedValue({ sub: 'a1', email: 'a@a.com' });
+      prisma.platformAdmin.findUnique.mockResolvedValue({ id: 'a1', activo: true, email: 'a@a.com', nombre: 'Admin One' });
+
+      const r = await service.refresh('valido');
+      expect(r.accessToken).toBe('jwt.token.here');
+      expect(r.refreshToken).toBe('jwt.token.here');
+      expect(prisma.auditoriaPlataforma.create).not.toHaveBeenCalled();
+    });
   });
 });

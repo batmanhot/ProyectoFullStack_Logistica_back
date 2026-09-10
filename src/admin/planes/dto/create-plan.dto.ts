@@ -1,5 +1,4 @@
 import {
-  ArrayNotEmpty,
   IsArray,
   IsBoolean,
   IsIn,
@@ -60,13 +59,16 @@ export class CreatePlanDto {
   @Min(1)
   vigenciaDias?: number;
 
+  // Puede ir vacía: un plan a medida (esPublico=false) no siempre lista features.
   @IsOptional()
   @IsArray()
-  @ArrayNotEmpty()
   @IsString({ each: true })
   caracteristicas?: string[];
 
-  // ── Límites (solo configuración — sin enforcement, decisión de Fase 7d) ──
+  // ── Límites ──
+  // `maxUsuarios` SÍ se aplica en el backend (common/utils/plan-limits.util.ts,
+  // regla de gobierno 3/5). El resto de topes y `modulosIncluidos` hoy solo se
+  // verifican en el cliente (hooks/usePlanLimits.js + guards de ruta).
   @IsOptional()
   @IsInt()
   maxUsuarios?: number; // -1 = ilimitado

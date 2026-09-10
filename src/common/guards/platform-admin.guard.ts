@@ -42,8 +42,8 @@ export class PlatformAdminGuard implements CanActivate {
     }
   }
 
-  private extractToken(request: any): string | undefined {
-    const authHeader: string | undefined = request.headers?.authorization;
+  private extractToken(request: { headers?: Record<string, string | undefined> }): string | undefined {
+    const authHeader = request.headers?.authorization;
     if (!authHeader) return undefined;
     const [type, token] = authHeader.split(' ');
     return type === 'Bearer' ? token : undefined;

@@ -3,6 +3,7 @@ import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../common/decorators/public.decorator';
 import { AdminAuthService } from './admin-auth.service';
 import { AdminLoginDto } from './dto/admin-login.dto';
+import { AdminRefreshDto } from './dto/admin-refresh.dto';
 
 @Controller('admin/auth')
 export class AdminAuthController {
@@ -17,5 +18,16 @@ export class AdminAuthController {
   @HttpCode(HttpStatus.OK)
   login(@Body() dto: AdminLoginDto) {
     return this.adminAuthService.login(dto.email, dto.password);
+  }
+
+  // Renovación silenciosa del access token de 8 h. Límite más holgado que el
+  // login: el front lo dispara solo al vencer el access, no es un vector de
+  // fuerza bruta de credenciales (exige un refresh token ya válido).
+  @Public()
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  refresh(@Body() dto: AdminRefreshDto) {
+    return this.adminAuthService.refresh(dto.refreshToken);
   }
 }
