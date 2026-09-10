@@ -334,6 +334,9 @@ export class AuthService {
       empresaId: usuario.empresaId,
       email: usuario.email,
       rolId: usuario.rolId,
+      // #5b: el access token también lleva tokenVersion, para que JwtAuthGuard
+      // pueda cortar una sesión revocada sin esperar los 15 min de expiración.
+      tokenVersion: usuario.tokenVersion,
     };
 
     // Nota de tipos: @nestjs/jwt tipa `expiresIn` con un literal de plantilla

@@ -5,6 +5,8 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { PrismaService } from '../../prisma/prisma.service';
+import { TtlCache } from '../utils/ttl-cache';
 
 export interface PlatformAdminPayload {
   sub: string;
@@ -19,10 +21,19 @@ export interface PlatformAdminPayload {
  * @UseGuards(PlatformAdminGuard) (para exigir este token específico).
  * Los dos esquemas de auth NUNCA se mezclan — un PlatformAdmin no
  * pertenece a ninguna Empresa.
+ *
+ * #5b (2026-09-10): además de la firma, revalida que la cuenta siga activa /
+ * exista (cache ~30 s). Sin esto, un SuperAdmin eliminado o desactivado
+ * conservaba acceso hasta 8 h (lo que dura el access token).
  */
 @Injectable()
 export class PlatformAdminGuard implements CanActivate {
-  constructor(private readonly jwtService: JwtService) {}
+  private readonly adminActivo = new TtlCache<boolean>(30_000);
+
+  constructor(
+    private readonly jwtService: JwtService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
@@ -31,15 +42,34 @@ export class PlatformAdminGuard implements CanActivate {
       throw new UnauthorizedException('Token de administrador no provisto');
     }
 
+    let payload: PlatformAdminPayload;
     try {
-      const payload = await this.jwtService.verifyAsync<PlatformAdminPayload>(token, {
+      payload = await this.jwtService.verifyAsync<PlatformAdminPayload>(token, {
         secret: process.env.ADMIN_JWT_SECRET,
       });
-      request.platformAdmin = payload;
-      return true;
     } catch {
       throw new UnauthorizedException('Token de administrador inválido o expirado');
     }
+
+    if (!(await this.sigueActivo(payload.sub))) {
+      throw new UnauthorizedException('La cuenta de administrador está desactivada o ya no existe');
+    }
+
+    request.platformAdmin = payload;
+    return true;
+  }
+
+  private async sigueActivo(id: string): Promise<boolean> {
+    const hit = this.adminActivo.get(id);
+    if (hit !== undefined) return hit;
+    // PlatformAdmin no tiene RLS (no pertenece a ninguna Empresa).
+    const a = await this.prisma.platformAdmin.findUnique({
+      where: { id },
+      select: { activo: true },
+    });
+    const activo = !!a?.activo;
+    this.adminActivo.set(id, activo);
+    return activo;
   }
 
   private extractToken(request: { headers?: Record<string, string | undefined> }): string | undefined {
