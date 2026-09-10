@@ -50,6 +50,7 @@ import { SunatModule } from './sunat/sunat.module';
 import { AuditoriaModule } from './auditoria/auditoria.module';
 import { ConfiguracionModule } from './configuracion/configuracion.module';
 import { AprobacionesModule } from './aprobaciones/aprobaciones.module';
+import { ImportacionModule } from './importacion/importacion.module';
 import { PublicModule } from './public/public.module';
 import { HealthModule } from './health/health.module';
 import { ListasPreciosModule } from './listas-precios/listas-precios.module';
@@ -139,6 +140,8 @@ import { ProyectosModule } from './proyectos/proyectos.module';
     ConfiguracionModule,
     // #11b (2026-09-10) — autoridad de aprobación configurable por proceso
     AprobacionesModule,
+    // 2026-09-10 — importación en lote de datos maestros (Configuración)
+    ImportacionModule,
     // Fase 9 — Endpoints públicos (landing + planes sin auth) para la landing page pública
     PublicModule,
     // Fase 9 — Listas de Precios (multi-tenant)
