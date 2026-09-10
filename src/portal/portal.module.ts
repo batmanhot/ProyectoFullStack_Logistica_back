@@ -3,12 +3,13 @@ import { JwtModule } from '@nestjs/jwt';
 import { DespachosModule } from '../despachos/despachos.module';
 import { PortalService } from './portal.service';
 import { PortalClienteController } from './portal-cliente.controller';
+import { PortalAuthController } from './portal-auth.controller';
 import { PedidosPortalAdminController } from './pedidos-portal-admin.controller';
 import { PortalClienteGuard } from '../common/guards/portal-cliente.guard';
 
 @Module({
   imports: [JwtModule.register({}), DespachosModule],
-  controllers: [PortalClienteController, PedidosPortalAdminController],
+  controllers: [PortalClienteController, PortalAuthController, PedidosPortalAdminController],
   providers: [PortalService, PortalClienteGuard],
   // JwtModule se re-exporta por el mismo motivo que en AdminAuthModule
   // (Fase 7d) — PortalClienteGuard usado vía @UseGuards() necesita
