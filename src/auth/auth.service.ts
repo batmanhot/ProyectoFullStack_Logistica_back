@@ -266,6 +266,68 @@ export class AuthService {
     );
   }
 
+  /**
+   * Vista 360° del usuario autenticado (GET /auth/me). Solo lectura — el
+   * tenant no edita su propio perfil (eso lo hace un admin desde Usuarios).
+   * Combina identidad + perfil + rol/permisos + contexto por rol (área,
+   * transportista) + datos de la empresa + un resumen de actividad.
+   */
+  async perfil(empresaId: string, usuarioId: string) {
+    const usuario = await this.prisma.withTenant(empresaId, (tx) =>
+      tx.usuario.findUnique({
+        where: { id: usuarioId },
+        include: {
+          rol: { include: { permisos: { select: { modulo: true } } } },
+          area: { select: { nombre: true, codigo: true } },
+          transportista: { select: { nombre: true, placa: true } },
+        },
+      }),
+    );
+    if (!usuario) throw new UnauthorizedException('Usuario no encontrado');
+
+    const [empresa, loginPrevio, accionesRegistradas] = await Promise.all([
+      this.prisma.empresa.findUnique({
+        where: { id: empresaId },
+        select: { nombre: true, codigo: true, plan: true, estado: true, fechaVencimiento: true },
+      }),
+      this.prisma.withTenant(empresaId, (tx) =>
+        tx.auditoria.findFirst({
+          where: { usuarioId, accion: 'LOGIN' },
+          orderBy: { timestamp: 'desc' },
+          skip: 1, // [0] es el login de esta misma sesión
+          select: { timestamp: true },
+        }),
+      ),
+      this.prisma.withTenant(empresaId, (tx) =>
+        tx.auditoria.count({
+          where: { usuarioId, accion: { in: ['CREATE', 'UPDATE', 'DELETE'] } },
+        }),
+      ),
+    ]);
+
+    const permisos = usuario.rol.permisos.map((p) => p.modulo);
+    return {
+      id: usuario.id,
+      nombre: usuario.nombre,
+      email: usuario.email,
+      telefono: usuario.telefono,
+      documento: usuario.documento,
+      cargo: usuario.cargo,
+      activo: usuario.activo,
+      miembroDesde: usuario.createdAt,
+      rol: { codigo: usuario.rol.codigo, label: usuario.rol.label },
+      accesoTotal: permisos.includes('*'),
+      modulos: permisos.includes('*') ? [] : permisos,
+      area: usuario.area,
+      transportista: usuario.transportista,
+      metaVentasMensual:
+        usuario.metaVentasMensual != null ? Number(usuario.metaVentasMensual) : null,
+      empresa,
+      ultimoAccesoPrevio: loginPrevio?.timestamp ?? null,
+      accionesRegistradas,
+    };
+  }
+
   private async emitirTokens(usuario: UsuarioConRol) {
     const basePayload = {
       sub: usuario.id,

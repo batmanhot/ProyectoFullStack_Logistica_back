@@ -32,7 +32,7 @@ const ALLOWLIST: Record<string, string[]> = {
   'proyectos/proyectos.controller.ts': ['findAll', 'findOne'],
   'movimientos/movimientos.controller.ts': ['findAll', 'findOne', 'kardex'],
   'roles/roles.controller.ts': ['verificarPermiso'],
-  'auth/auth.controller.ts': ['logout'],
+  'auth/auth.controller.ts': ['logout', 'perfil'], // GET /auth/me — vista 360° del propio usuario, cualquier logueado, solo lectura
   // Grupo 2 — sin @Permiso() de módulo a propósito (ver comentario de cada controller).
   'email/email.controller.ts': ['enviarDocumento', 'generarPdf'],
   'push/push.controller.ts': ['subscribe', 'unsubscribe'],

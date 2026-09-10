@@ -60,4 +60,10 @@ export class AuthController {
   logout(@TenantId() empresaId: string, @CurrentUser() user: JwtPayload) {
     return this.authService.logout(empresaId, user.sub);
   }
+
+  /** Vista 360° del usuario autenticado (Mi Perfil). Cualquier usuario logueado; solo lectura. */
+  @Get('auth/me')
+  perfil(@TenantId() empresaId: string, @CurrentUser() user: JwtPayload) {
+    return this.authService.perfil(empresaId, user.sub);
+  }
 }

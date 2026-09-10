@@ -326,4 +326,58 @@ describe('AuthService', () => {
       expect(prismaMock.withTenant).not.toHaveBeenCalled();
     });
   });
+
+  describe('perfil — GET /auth/me (Mi Perfil)', () => {
+    function stubTx(usuario: any, loginPrevio: any = null, count = 0) {
+      const tx = {
+        usuario: { findUnique: vi.fn().mockResolvedValue(usuario) },
+        auditoria: {
+          findFirst: vi.fn().mockResolvedValue(loginPrevio),
+          count: vi.fn().mockResolvedValue(count),
+        },
+      };
+      prismaMock.withTenant.mockImplementation((_e: string, fn: any) => fn(tx));
+    }
+
+    it('lanza Unauthorized si el usuario no existe', async () => {
+      stubTx(null);
+      await expect(service.perfil('e1', 'u1')).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('devuelve la vista 360° con acceso total para un rol con permiso "*"', async () => {
+      stubTx({
+        id: 'u1', nombre: 'Ana', email: 'ana@x.pe', telefono: '999', documento: '12345678',
+        cargo: 'Jefa', activo: true, createdAt: new Date('2026-01-01'), metaVentasMensual: null,
+        rol: { codigo: 'admin', label: 'Administrador', permisos: [{ modulo: '*' }] },
+        area: null, transportista: null,
+      }, { timestamp: new Date('2026-09-09T10:00:00Z') }, 42);
+      prismaMock.empresa.findUnique.mockResolvedValue({ nombre: 'DL Norte', codigo: 'dlnorte', plan: 'empresarial', estado: 'activo', fechaVencimiento: null });
+
+      const r: any = await service.perfil('e1', 'u1');
+      expect(r).toMatchObject({
+        id: 'u1', nombre: 'Ana', cargo: 'Jefa',
+        rol: { codigo: 'admin', label: 'Administrador' },
+        accesoTotal: true, modulos: [],
+        empresa: { nombre: 'DL Norte', plan: 'empresarial' },
+        accionesRegistradas: 42,
+      });
+      expect(r.ultimoAccesoPrevio).toEqual(new Date('2026-09-09T10:00:00Z'));
+    });
+
+    it('lista los módulos concretos para un rol sin comodín y pasa el contexto de área', async () => {
+      stubTx({
+        id: 'u2', nombre: 'Beto', email: 'beto@x.pe', telefono: null, documento: null, cargo: null,
+        activo: true, createdAt: new Date('2026-02-01'), metaVentasMensual: null,
+        rol: { codigo: 'solicitante', label: 'Solicitante', permisos: [{ modulo: 'pedidos-internos' }] },
+        area: { nombre: 'Operaciones', codigo: 'OPS' }, transportista: null,
+      });
+      prismaMock.empresa.findUnique.mockResolvedValue({ nombre: 'X', codigo: 'x', plan: 'starter', estado: 'activo', fechaVencimiento: null });
+
+      const r: any = await service.perfil('e1', 'u2');
+      expect(r.accesoTotal).toBe(false);
+      expect(r.modulos).toEqual(['pedidos-internos']);
+      expect(r.area).toEqual({ nombre: 'Operaciones', codigo: 'OPS' });
+      expect(r.ultimoAccesoPrevio).toBeNull();
+    });
+  });
 });
