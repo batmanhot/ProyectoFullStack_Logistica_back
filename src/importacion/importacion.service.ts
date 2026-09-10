@@ -12,6 +12,21 @@ export interface FilaAnalizada {
   existenteId?: string;
 }
 
+export interface ResultadoImport {
+  entidad: string;
+  resumen: {
+    total: number;
+    crear: number;
+    actualizar: number;
+    error: number;
+    creados?: number;
+    actualizados?: number;
+  };
+  /** Diagnóstico por fila. Presente tanto en la vista previa (dryRun) como en
+   *  la confirmación, para que el frontend pueda mostrar el detalle en ambos. */
+  filas: FilaAnalizada[];
+}
+
 const RE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const RE_RUC = /^\d{8,11}$/;
 
@@ -54,7 +69,7 @@ export class ImportacionService {
     entidad: string,
     filasRaw: Record<string, unknown>[],
     dryRun: boolean,
-  ) {
+  ): Promise<ResultadoImport> {
     const cfg = this.cfg(entidad);
     if (!Array.isArray(filasRaw) || filasRaw.length === 0) {
       throw new BadRequestException('No se recibió ninguna fila para importar.');
@@ -113,7 +128,7 @@ export class ImportacionService {
       }
     });
 
-    return { entidad: cfg.entidad, resumen: { ...resumen, creados, actualizados } };
+    return { entidad: cfg.entidad, resumen: { ...resumen, creados, actualizados }, filas: analizadas };
   }
 
   private analizarFila(cfg: EntidadImport, raw: Record<string, unknown>, i: number): FilaAnalizada {
