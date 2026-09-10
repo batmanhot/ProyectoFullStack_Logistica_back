@@ -80,6 +80,9 @@ model Empresa {
   inventariosFisicos        InventarioFisico[]
   vehiculosFlota            VehiculoFlota[]
   renovacionesPlan          RenovacionPlan[]
+  facturasSaaS              FacturaSaaS[]
+  respaldos                 RespaldoNegocio[]
+  solicitudesRestauracion   SolicitudRestauracion[]
   pedidosPortal             PedidoPortal[]
   facturasB2B               FacturaB2B[]
   guiasRemisionElectronicas GuiaRemisionElectronica[]
@@ -130,6 +133,12 @@ model Usuario {
   // teléfono/WhatsApp/correo sin cuota fija) — sin meta configurada, los
   // reportes simplemente no comparan contra un objetivo.
   metaVentasMensual Decimal?       @db.Decimal(12, 2)
+  // Datos de perfil (2026-09-09) — pensados sobre todo para el Owner / Admin del
+  // Negocio que registra el SuperAdmin, pero disponibles para cualquier usuario.
+  // Todos nullable: el registro mínimo sigue siendo nombre + email + contraseña.
+  telefono          String?
+  documento         String? // DNI / CE
+  cargo             String?
   activo            Boolean        @default(true)
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
@@ -157,6 +166,7 @@ model Rol {
   empresa         Empresa? @relation(fields: [empresaId], references: [id])
   codigo          String // 'owner' | 'admin' | 'supervisor' | 'almacenero' | 'solicitante' | custom
   label           String // nombre visible: 'Propietario', 'Administrador', etc.
+  descripcion     String? // para qué sirve el rol — lo ve el tenant al asignarlo
   esPersonalizado Boolean  @default(false)
   createdAt       DateTime @default(now())
 
@@ -1453,6 +1463,11 @@ model PlatformAdmin {
   passwordHash String
   nombre       String
   activo       Boolean  @default(true)
+  // Cuenta raíz nativa de la plataforma (la que crea el seed / bootstrap-render).
+  // docs/GOBIERNO-PLATAFORMA.md regla 2: no se puede desactivar, no se le cambia
+  // el email (ancla del upsert del seed), y otro SuperAdmin no puede editar sus
+  // credenciales. Solo su propio dueño la edita (nombre + contraseña).
+  esNativo     Boolean  @default(false)
   createdAt    DateTime @default(now())
 
   auditorias AuditoriaPlataforma[]
@@ -1469,18 +1484,20 @@ model PlatformAdmin {
 // no lo es) porque acá si puede ir null (acciones que no apuntan a un negocio
 // puntual, ej. crear un Plan).
 model AuditoriaPlataforma {
-  id         String        @id @default(cuid())
-  adminId    String
-  admin      PlatformAdmin @relation(fields: [adminId], references: [id])
+  id         String         @id @default(cuid())
+  // Nullable + SetNull: eliminar un PlatformAdmin no debe borrar su rastro de
+  // auditoría — la fila queda con `adminEmail` (denormalizado) como registro.
+  adminId    String?
+  admin      PlatformAdmin? @relation(fields: [adminId], references: [id], onDelete: SetNull)
   adminEmail String
   accion     String // nombre del método del controller: create | update | remove | archivar | anular | ...
   recurso    String // negocios | planes | renovaciones | alertas | landing
   recursoId  String?
   empresaId  String?
-  empresa    Empresa?      @relation(fields: [empresaId], references: [id])
+  empresa    Empresa?       @relation(fields: [empresaId], references: [id])
   detalle    String
   datos      Json? // body de la request, sin campos sensibles (ver PlatformAuditInterceptor.sanitizar)
-  timestamp  DateTime      @default(now())
+  timestamp  DateTime       @default(now())
 
   @@index([adminId])
   @@index([recurso, recursoId])
@@ -1510,7 +1527,9 @@ model PlanSaaS {
   modulosIncluidos String[] @default([])
   esPublico        Boolean  @default(true)
 
-  // Límites — solo configuración (Fase 7d: sin enforcement, decisión confirmada)
+  // Límites. `maxUsuarios` se aplica en el backend (common/utils/plan-limits.util.ts,
+  // regla de gobierno 3/5). El resto de topes y `modulosIncluidos` hoy solo se
+  // verifican en el cliente (hooks/usePlanLimits.js + guards de ruta).
   maxUsuarios       Int     @default(1) // -1 = ilimitado
   maxProductos      Int     @default(100)
   maxAlmacenes      Int     @default(1)
@@ -1528,6 +1547,7 @@ model PlanSaaS {
   updatedAt DateTime @updatedAt
 
   renovaciones RenovacionPlan[]
+  facturasSaaS FacturaSaaS[]
 
   @@map("planes_saas")
 }
@@ -1556,13 +1576,210 @@ model RenovacionPlan {
   comprobante   String?
   createdAt     DateTime         @default(now())
 
+  facturasSaaS FacturaSaaS[]
+
   @@map("renovaciones_plan")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Facturación de la plataforma (SuperAdmin → Comercial → Facturación)
+// Documento de cobro que se emite A PARTIR de una suscripción/renovación.
+// Admin-only, sin RLS — mismo criterio que RenovacionPlan/PlanSaaS (Fase 7d):
+// solo se accede vía PlatformAdminGuard, nunca por withTenant().
+// "Vencida" NO se persiste: se deriva (estado EMITIDA + venceEn < ahora),
+// para no arrastrar un estado obsoleto — igual que estadoEfectivo de Negocios.
+enum EstadoFacturaSaaS {
+  EMITIDA
+  PAGADA
+  ANULADA
+}
+
+model FacturaSaaS {
+  id             String            @id @default(cuid())
+  numero         String            @unique // correlativo legible: FAC-001001
+  empresaId      String
+  empresa        Empresa           @relation(fields: [empresaId], references: [id])
+  // Renovación (pago de suscripción) que este documento factura, si nació de una.
+  // SetNull: anular la renovación no borra la factura ya emitida.
+  renovacionId   String?
+  renovacion     RenovacionPlan?   @relation(fields: [renovacionId], references: [id], onDelete: SetNull)
+  planId         String
+  plan           PlanSaaS          @relation(fields: [planId], references: [id])
+  planNombre     String // snapshot del nombre del plan al emitir (el plan puede renombrarse)
+  ciclo          String // mensual | anual
+  moneda         String            @default("PEN")
+  subtotal       Decimal           @db.Decimal(10, 2)
+  igv            Decimal           @db.Decimal(10, 2)
+  total          Decimal           @db.Decimal(10, 2)
+  emitidaEn      DateTime          @default(now())
+  venceEn        DateTime
+  enviadaEn      DateTime?
+  estado         EstadoFacturaSaaS @default(EMITIDA)
+  metodoPago     String? // tarjeta | transferencia | efectivo | yape | paypal
+  referenciaPago String?
+  pagadaEn       DateTime?
+  nota           String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  eventos EventoFacturaSaaS[]
+
+  @@index([empresaId])
+  @@index([estado])
+  @@map("facturas_saas")
+}
+
+// Bitácora por-documento (emitida / enviada / cobro_registrado / anulada).
+// Distinta de AuditoriaPlataforma (que registra quién lo hizo desde el panel):
+// esta es la línea de tiempo del documento en sí, visible en su detalle.
+model EventoFacturaSaaS {
+  id        String      @id @default(cuid())
+  facturaId String
+  factura   FacturaSaaS @relation(fields: [facturaId], references: [id], onDelete: Cascade)
+  tipo      String
+  detalle   String
+  monto     Decimal     @db.Decimal(10, 2)
+  fecha     DateTime    @default(now())
+
+  @@index([facturaId])
+  @@map("eventos_factura_saas")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Backups / continuidad operativa (SuperAdmin → Plataforma → Backups)
+// REGISTRO Y GOBIERNO del flujo — NO ejecuta pg_dump ni sube a storage.
+// El SuperAdmin registra que un respaldo existe (tomado por infra fuera de
+// la app), controla su verificación de integridad, y la restauración pasa
+// por una máquina de estados con aprobación documentada del cliente. Todo
+// auditado (PlatformAuditInterceptor). Admin-only, sin RLS.
+// La ejecución real (worker + Object Storage + KMS) queda pendiente —
+// ver el banner "Preparación para backend" del panel.
+enum EstadoRespaldo {
+  VALIDANDO
+  COMPLETADO
+  FALLIDO
+}
+
+enum IntegridadRespaldo {
+  PENDIENTE
+  VERIFICADO
+  CON_OBSERVACIONES
+}
+
+enum EstadoRestauracion {
+  PENDIENTE_APROBACION
+  APROBADA
+  EN_EJECUCION
+  RESTAURADA
+  RECHAZADA
+}
+
+model RespaldoNegocio {
+  id            String             @id @default(cuid())
+  // Nullable: `null` = respaldo de TODA la plataforma (pg_dump completo). Un
+  // valor = respaldo lógico de ese tenant.
+  empresaId     String?
+  empresa       Empresa?           @relation(fields: [empresaId], references: [id])
+  alcance       String // base_datos | base_datos_archivos | configuracion | plataforma_completa
+  estado        EstadoRespaldo     @default(VALIDANDO)
+  integridad    IntegridadRespaldo @default(PENDIENTE)
+  tamanoBytes   BigInt? // informado por quien registra el respaldo; opcional
+  // Quién lo generó: 'manual' (SuperAdmin lo registra) | 'automatico' (job/cron).
+  origen        String             @default("manual")
+  formato       String? // pg_dump | json_tenant
+  // Ubicación real del artefacto en el object storage (bucket/key). El panel
+  // NO descarga — muestra la ruta para que Ops lo baje con la llave.
+  storageKey    String?
+  checksum      String? // sha256 hex del artefacto cifrado
+  // Destino: para respaldos manuales se deriva del negocio; para automáticos
+  // lo informa el job.
+  destinoNombre String
+  destinoRegion String?
+  retencionDias Int                @default(90)
+  cifrado       Boolean            @default(true)
+  creadoPor     String // email del PlatformAdmin, o 'sistema (job de backup)'
+  nota          String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  restauraciones SolicitudRestauracion[]
+  eventos        EventoRespaldo[]
+
+  @@index([empresaId])
+  @@index([estado])
+  @@index([origen, createdAt])
+  @@map("respaldos_negocio")
+}
+
+// Resultado del test de restauración periódico (job de CI): restaura el último
+// dump completo en un Postgres efímero y valida. Es la única señal de que los
+// backups DE VERDAD sirven.
+model PruebaRestauracion {
+  id          String   @id @default(cuid())
+  resultado   String // ok | fallo
+  detalle     String?
+  dumpProbado String? // storageKey del dump que se probó
+  duracionMs  Int?
+  ejecutadaEn DateTime @default(now())
+
+  @@index([ejecutadaEn])
+  @@map("pruebas_restauracion")
+}
+
+model SolicitudRestauracion {
+  id                  String             @id @default(cuid())
+  respaldoId          String
+  respaldo            RespaldoNegocio    @relation(fields: [respaldoId], references: [id], onDelete: Cascade)
+  empresaId           String
+  empresa             Empresa            @relation(fields: [empresaId], references: [id])
+  estado              EstadoRestauracion @default(PENDIENTE_APROBACION)
+  motivo              String
+  solicitadoPor       String // email del PlatformAdmin
+  // Evidencia de que el cliente autorizó — obligatoria antes de ejecutar.
+  aprobacionContacto  String?
+  aprobacionEvidencia String?
+  aprobadoEn          DateTime?
+  ejecutadoEn         DateTime?
+  rechazoMotivo       String?
+  nota                String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  eventos EventoRespaldo[]
+
+  @@index([respaldoId])
+  @@index([empresaId])
+  @@index([estado])
+  @@map("solicitudes_restauracion")
+}
+
+// Bitácora de la operación de respaldo/restauración, visible en el detalle
+// y en el tab "Actividad".
+model EventoRespaldo {
+  id             String                 @id @default(cuid())
+  respaldoId     String?
+  respaldo       RespaldoNegocio?       @relation(fields: [respaldoId], references: [id], onDelete: Cascade)
+  restauracionId String?
+  restauracion   SolicitudRestauracion? @relation(fields: [restauracionId], references: [id], onDelete: Cascade)
+  empresaId      String?
+  tipo           String // respaldo_creado | integridad_verificada | estado_actualizado | restauracion_solicitada | aprobacion_registrada | restauracion_ejecutada | restauracion_rechazada
+  detalle        String
+  actor          String
+  fecha          DateTime               @default(now())
+
+  @@index([respaldoId])
+  @@index([restauracionId])
+  @@map("eventos_respaldo")
 }
 
 model ReglaAlertaVencimiento {
   id        String   @id @default(cuid())
   diasAntes Int
   activa    Boolean  @default(true)
+  // "Borrada" desde el panel — distinta de activa:false (pausada, reactivable).
+  // Soft-delete real porque AlertaEnvio la referencia por FK y no se puede
+  // hacer un DELETE físico sin arrastrar el historial.
+  eliminada Boolean  @default(false)
   canales   String[] // email | sistema | whatsapp | sms — solo 'email' tiene envío real hoy (ver AlertasService)
   asunto    String
   mensaje   String
@@ -1571,6 +1788,43 @@ model ReglaAlertaVencimiento {
   envios AlertaEnvio[]
 
   @@map("reglas_alerta_vencimiento")
+}
+
+// Incidente de plataforma detectado por el Monitor en Vivo (2026-09-09): cambio
+// de estado de un servicio lógico (grupo de rutas de API, o la BD) a
+// "degradado"/"caído" según la telemetría en memoria. Un cron cada minuto lo
+// abre y lo cierra (`resueltoAt`). Cada apertura/cierre deja además rastro en
+// AuditoriaPlataforma y aparece como alerta en el Centro de Alertas.
+model IncidenteMonitor {
+  id         String    @id @default(cuid())
+  servicio   String // "API Despachos" | "Base de datos" | ...
+  tipo       String // "API" | "Base de datos"
+  severidad  String // 'degradado' | 'caido'
+  detalle    String?
+  inicioAt   DateTime  @default(now())
+  resueltoAt DateTime?
+
+  @@index([resueltoAt])
+  @@index([servicio])
+  @@map("incidentes_monitor")
+}
+
+// Estado de gobierno de una alerta DERIVADA del Centro de Alertas del SuperAdmin
+// (2026-09-08). Las alertas de salud del sistema (vencimiento, límites de plan
+// excedidos, correos fallando…) se calculan en vivo y NO se persisten — acá solo
+// se guarda que un SuperAdmin ya la atendió o la silenció, identificada por una
+// `clave` estable, ej. "limite_excedido:<empresaId>:usuarios".
+model AlertaEstado {
+  id              String    @id @default(cuid())
+  clave           String    @unique
+  estado          String // 'resuelta' | 'silenciada'
+  nota            String?
+  silenciadaHasta DateTime? // solo para 'silenciada'; se vuelve a mostrar al pasar esta fecha (null = indefinido)
+  actualizadoPor  String? // email del PlatformAdmin que la atendió
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("alertas_estado")
 }
 
 // Registro de cada intento de envío real de una alerta de vencimiento
@@ -1615,12 +1869,15 @@ model LandingConfig {
 // marketing), acá viven flags operativos que afectan a todos los tenants.
 // ─────────────────────────────────────────────────────────────────
 model PlataformaConfig {
-  id                   String   @id @default(cuid())
+  id                     String   @id @default(cuid())
   // SuperAdmin → Ajustes: muestra las tarjetas de acceso rápido (login sin
   // contraseña, un usuario por rol) en el Login para TODOS los negocios.
   // En producción solo surte efecto si el despliegue trae ALLOW_DEMO_LOGIN=true.
-  accesoRapidoTarjetas Boolean  @default(false)
-  updatedAt            DateTime @updatedAt
+  accesoRapidoTarjetas   Boolean  @default(false)
+  // Días que se conserva la Bitácora de plataforma (AuditoriaPlataforma). Un
+  // cron diario purga lo más viejo. Ver AuditoriaPlataformaService.
+  retencionAuditoriaDias Int      @default(365)
+  updatedAt              DateTime @updatedAt
 
   @@map("plataforma_config")
 }

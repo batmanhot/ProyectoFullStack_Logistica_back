@@ -167,9 +167,11 @@ const ROLES_BASE: { codigo: string; label: string; permisos: string[] }[] = [
   },
 ];
 
-// Un usuario por rol (menos 'owner', redundante con 'admin' — mismos permisos
-// ['*']) para poder probar cada nivel de acceso desde las tarjetas de acceso
-// rápido del Login en modo desarrollo (ver ROLES_LABEL en Login.jsx).
+// Un usuario por rol para poder probar cada nivel de acceso desde las tarjetas
+// de acceso rápido del Login (ver ROLES_LABEL en Login.jsx). Incluye 'owner' y
+// 'admin' como usuarios separados — docs/GOBIERNO-PLATAFORMA.md regla 3: todo
+// negocio nace con un Propietario (owner) obligatorio + un Admin del Negocio
+// (admin) opcional. Ambos tienen permisos ['*'].
 const EMPRESAS_DEMO = [
   {
     codigo: 'dlnorte',
@@ -181,6 +183,7 @@ const EMPRESAS_DEMO = [
     // vista móvil) se puedan probar todos sin que el plan bloquee alguno (Fase 3b).
     plan: 'empresarial',
     usuarios: [
+      { email: 'owner@dlnorte.demo',       nombre: 'Propietario DL Norte', rolCodigo: 'owner' },
       { email: 'admin@dlnorte.demo',       nombre: 'Admin DL Norte',       rolCodigo: 'admin' },
       { email: 'gerente@dlnorte.demo',     nombre: 'Gerente Operaciones DL Norte', rolCodigo: 'gerente-operaciones' },
       { email: 'supervisor@dlnorte.demo',  nombre: 'Supervisor DL Norte',  rolCodigo: 'supervisor' },
@@ -211,6 +214,7 @@ const EMPRESAS_DEMO = [
     origen: 'demo',
     plan: 'empresarial',
     usuarios: [
+      { email: 'owner@acme.demo',       nombre: 'Propietario Acme', rolCodigo: 'owner' },
       { email: 'admin@acme.demo',       nombre: 'Admin Acme',       rolCodigo: 'admin' },
       { email: 'gerente@acme.demo',     nombre: 'Gerente Operaciones Acme', rolCodigo: 'gerente-operaciones' },
       { email: 'supervisor@acme.demo',  nombre: 'Supervisor Acme',  rolCodigo: 'supervisor' },
@@ -504,11 +508,13 @@ async function main() {
     where: { email: platformAdminEmail },
     // Sincroniza la contraseña en cada corrida: sin esto, cambiar
     // PLATFORM_ADMIN_PASSWORD y re-seedear no tenía efecto si la fila ya existía.
-    update: { passwordHash: adminPasswordHash, nombre: PLATFORM_ADMIN_DEMO.nombre, activo: true },
+    // esNativo=true: es la cuenta raíz de la plataforma (regla de gobierno 2).
+    update: { passwordHash: adminPasswordHash, nombre: PLATFORM_ADMIN_DEMO.nombre, activo: true, esNativo: true },
     create: {
       email: platformAdminEmail,
       nombre: PLATFORM_ADMIN_DEMO.nombre,
       passwordHash: adminPasswordHash,
+      esNativo: true,
     },
   });
   console.log(`  ✓ PlatformAdmin: ${platformAdmin.email}`);
