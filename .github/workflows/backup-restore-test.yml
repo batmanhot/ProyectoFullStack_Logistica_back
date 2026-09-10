@@ -1,0 +1,52 @@
+name: Test de restauración (mensual)
+
+on:
+  schedule:
+    - cron: '30 7 1 * *' # 07:30 UTC del día 1 de cada mes
+  workflow_dispatch: {}
+
+jobs:
+  restore-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      scratch:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: scratch, POSTGRES_DB: scratch }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      TEST_RESTORE_DB_URL: postgres://postgres:scratch@localhost:5432/scratch
+      BACKUP_API_URL: ${{ secrets.BACKUP_API_URL }}
+      BACKUP_INGEST_TOKEN: ${{ secrets.BACKUP_INGEST_TOKEN }}
+      BACKUP_STORAGE_BUCKET: ${{ secrets.BACKUP_STORAGE_BUCKET }}
+      BACKUP_STORAGE_ENDPOINT: ${{ secrets.BACKUP_STORAGE_ENDPOINT }}
+      BACKUP_STORAGE_KEY_ID: ${{ secrets.BACKUP_STORAGE_KEY_ID }}
+      BACKUP_STORAGE_SECRET: ${{ secrets.BACKUP_STORAGE_SECRET }}
+      BACKUP_AGE_RECIPIENT: ${{ secrets.BACKUP_AGE_RECIPIENT }}
+      BACKUP_AGE_IDENTITY_FILE: age-key.txt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+
+      - name: Instalar herramientas
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-client age
+          npm ci
+          npm i --no-save @aws-sdk/client-s3
+          npx prisma generate
+
+      - name: Escribir clave age
+        run: printf '%s' "${{ secrets.BACKUP_AGE_IDENTITY }}" > age-key.txt
+
+      - name: Tomar un dump fresco y probarlo
+        run: |
+          set -euo pipefail
+          node scripts/backup/backup-full.mjs | tee /tmp/full.log
+          DUMP_KEY=$(grep -oE 'STORAGE_KEY=.+' /tmp/full.log | tail -1 | cut -d= -f2-)
+          test -n "$DUMP_KEY"
+          node scripts/backup/test-restore.mjs --dump "$DUMP_KEY" --target "$TEST_RESTORE_DB_URL"

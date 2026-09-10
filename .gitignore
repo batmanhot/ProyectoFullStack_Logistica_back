@@ -9,3 +9,7 @@ check.sql
 coverage/
 .vscode/
 *.tsbuildinfo
+
+# Backups locales de dev (scripts/backup/ sin BACKUP_STORAGE_*)
+/backups/
+age-key.txt

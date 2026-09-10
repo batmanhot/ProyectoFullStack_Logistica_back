@@ -34,7 +34,10 @@ import { AdminAuthModule } from './admin/auth/admin-auth.module';
 import { NegociosModule } from './admin/negocios/negocios.module';
 import { PlanesModule } from './admin/planes/planes.module';
 import { RenovacionesModule } from './admin/renovaciones/renovaciones.module';
+import { FacturacionModule } from './admin/facturacion/facturacion.module';
+import { BackupsModule } from './admin/backups/backups.module';
 import { AlertasModule } from './admin/alertas/alertas.module';
+import { MonitorModule } from './admin/monitor/monitor.module';
 import { LandingModule } from './admin/landing/landing.module';
 import { PlataformaConfigModule } from './admin/plataforma-config/plataforma-config.module';
 import { AuditoriaPlataformaModule } from './admin/auditoria/auditoria-plataforma.module';
@@ -110,7 +113,10 @@ import { ProyectosModule } from './proyectos/proyectos.module';
     NegociosModule,
     PlanesModule,
     RenovacionesModule,
+    FacturacionModule,
+    BackupsModule,
     AlertasModule,
+    MonitorModule,
     LandingModule,
     PlataformaConfigModule,
     AuditoriaPlataformaModule,
