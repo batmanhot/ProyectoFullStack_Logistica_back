@@ -2,12 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { UnauthorizedException } from '@nestjs/common';
 import { AdminAuthService } from './admin-auth.service';
 
-vi.mock('bcrypt', () => ({
+vi.mock('bcryptjs', () => ({
   default: { compare: vi.fn() },
   compare: vi.fn(),
 }));
 
-import * as bcrypt from 'bcrypt';
+import * as bcrypt from 'bcryptjs';
 
 describe('AdminAuthService', () => {
   let prisma: any;

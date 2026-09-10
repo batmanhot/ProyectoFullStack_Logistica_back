@@ -23,7 +23,13 @@ async function bootstrap() {
     // Hallazgo Bajo #17 (auditoría 2026-07-29): sin esto, detrás de un
     // proxy/balanceador request.ip refleja al proxy, no al cliente real
     // (afecta IPs de auditoría y las claves de rate limiting del Hallazgo #4).
-    new FastifyAdapter({ trustProxy: true }),
+    //
+    // 2026-09-10: `trustProxy: 1` (un salto) en vez de `true`. Con `true` un
+    // atacante podía spoofear X-Forwarded-For (advisory de fastify) y evadir
+    // el rate-limit de login o falsear IPs en la auditoría. Render pone
+    // exactamente 1 proxy delante del contenedor. Si se agrega otro proxy/CDN,
+    // subir este número (o pasar el CIDR del proxy).
+    new FastifyAdapter({ trustProxy: 1 }),
   );
 
   // Hallazgo Alto #9 (auditoría 2026-07-29): cabeceras de seguridad HTTP

@@ -109,7 +109,7 @@ if (SEED_DEMO_TENANTS === 'true') {
 // ── 3. Verificación real ─────────────────────────────────────────────
 step('4/4  verificación');
 const { PrismaClient } = require('@prisma/client');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 
 const prisma = new PrismaClient({ datasources: { db: { url: DATABASE_URL } } });
 let fallos = 0;

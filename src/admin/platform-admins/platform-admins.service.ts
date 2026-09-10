@@ -1,5 +1,5 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import * as bcrypt from 'bcrypt';
+import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { relanzarP2002 } from '../../common/utils/prisma-error.util';
 import { CreatePlatformAdminDto } from './dto/create-platform-admin.dto';

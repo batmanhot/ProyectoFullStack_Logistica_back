@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PlatformAdminsService } from './platform-admins.service';
 
-vi.mock('bcrypt', () => ({
+vi.mock('bcryptjs', () => ({
   default: { hash: vi.fn().mockResolvedValue('$hash$') },
   hash: vi.fn().mockResolvedValue('$hash$'),
 }));

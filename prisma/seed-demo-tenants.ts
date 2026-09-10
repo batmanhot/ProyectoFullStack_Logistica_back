@@ -17,7 +17,7 @@
  * `prisma/seed.ts` (bootstrap de plataforma) — este script asume que ya corrió.
  */
 import { PrismaClient } from '@prisma/client';
-import * as bcrypt from 'bcrypt';
+import * as bcrypt from 'bcryptjs';
 import { sembrarReglasAprobacion } from '../src/common/aprobacion-procesos';
 
 const prisma = new PrismaClient();
