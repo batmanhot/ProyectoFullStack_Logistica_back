@@ -28,7 +28,10 @@ export class PlataformaConfigService {
     const fila = await this.fila();
     const actualizada = await this.prisma.plataformaConfig.update({
       where: { id: fila.id },
-      data: { accesoRapidoTarjetas: dto.accesoRapidoTarjetas },
+      data: {
+        ...(dto.accesoRapidoTarjetas !== undefined && { accesoRapidoTarjetas: dto.accesoRapidoTarjetas }),
+        ...(dto.retencionAuditoriaDias !== undefined && { retencionAuditoriaDias: dto.retencionAuditoriaDias }),
+      },
     });
     return { ...actualizada, bloqueadoPorEntorno: entornoBloqueaAccesoRapido() };
   }
