@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
 import { CurrentUser, TenantId } from '../common/decorators/tenant.decorator';
 import { Permiso } from '../common/decorators/permiso.decorator';
+import { Aprobacion } from '../common/decorators/aprobacion.decorator';
 import { InventarioFisicoService } from './inventario-fisico.service';
 import { CreateInventarioFisicoDto } from './dto/create-inventario-fisico.dto';
 import { ActualizarLineaDto } from './dto/actualizar-linea.dto';
@@ -43,7 +44,12 @@ export class InventarioFisicoController {
     return this.inventarioFisicoService.actualizarLinea(empresaId, id, productoId, dto);
   }
 
-  /** Genera Movimientos AJUSTE reales por cada diferencia. */
+  /**
+   * Genera Movimientos AJUSTE reales por cada diferencia. Cerrar = autorizar
+   * el ajuste; quién puede hacerlo se configura en Configuración → Aprobaciones
+   * (#11b, proceso INVENTARIO_FISICO). Por defecto: cualquiera con 'inv-fisico'.
+   */
+  @Aprobacion('INVENTARIO_FISICO')
   @Post(':id/cerrar')
   cerrar(@TenantId() empresaId: string, @Param('id') id: string) {
     return this.inventarioFisicoService.cerrar(empresaId, id);

@@ -24,7 +24,7 @@ describe('AprobacionesService', () => {
       );
 
       const reglas = await service.listar('e1');
-      expect(reglas).toHaveLength(4);
+      expect(reglas).toHaveLength(6); // PEDIDO_INTERNO, DESPACHO, PEDIDO_PORTAL, FACTURA_B2B, INVENTARIO_FISICO, PROFORMA
 
       const pi = reglas.find((r) => r.proceso === 'PEDIDO_INTERNO')!;
       expect(pi.rolesAprobadores).toEqual(['gerente-operaciones']);

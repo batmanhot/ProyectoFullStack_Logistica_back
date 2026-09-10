@@ -1212,10 +1212,12 @@ model PedidoInternoItem {
 // Sin montos ni niveles — eso es #11c (aprobación de OC en cascada).
 // ─────────────────────────────────────────────────────────────────
 enum ProcesoAprobacion {
-  PEDIDO_INTERNO // Pedido Interno: ENVIADO → APROBADO / RECHAZADO
-  DESPACHO       // Despacho: PEDIDO → APROBADO
-  PEDIDO_PORTAL  // Pedido Portal B2B: aprobar (→ Despacho) / rechazar
-  FACTURA_B2B    // Factura de proveedor B2B: rechazar
+  PEDIDO_INTERNO     // Pedido Interno: ENVIADO → APROBADO / RECHAZADO
+  DESPACHO           // Despacho: PEDIDO → APROBADO
+  PEDIDO_PORTAL      // Pedido Portal B2B: aprobar (→ Despacho) / rechazar
+  FACTURA_B2B        // Factura de proveedor B2B: rechazar
+  INVENTARIO_FISICO  // Inventario Físico: cerrar (genera Movimientos AJUSTE reales)
+  PROFORMA           // Proforma de venta: aceptar (habilita convertir en Despacho)
 }
 
 model ReglaAprobacion {

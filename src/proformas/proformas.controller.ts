@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
 import { TenantId } from '../common/decorators/tenant.decorator';
 import { Permiso } from '../common/decorators/permiso.decorator';
+import { Aprobacion } from '../common/decorators/aprobacion.decorator';
 import { ProformasService } from './proformas.service';
 import { CreateProformaDto } from './dto/create-proforma.dto';
 import { UpdateProformaDto } from './dto/update-proforma.dto';
@@ -33,6 +34,13 @@ export class ProformasController {
   @Put(':id')
   update(@TenantId() empresaId: string, @Param('id') id: string, @Body() dto: UpdateProformaDto) {
     return this.proformasService.update(empresaId, id, dto);
+  }
+
+  /** Aceptar una proforma ENVIADA — aprobación configurable (#11b, proceso PROFORMA). */
+  @Aprobacion('PROFORMA')
+  @Post(':id/aceptar')
+  aceptar(@TenantId() empresaId: string, @Param('id') id: string) {
+    return this.proformasService.aceptar(empresaId, id);
   }
 
   @Delete(':id')

@@ -44,6 +44,18 @@ export const PROCESOS_APROBACION: ProcesoAprobacionMeta[] = [
     descripcion: 'Rechazar una factura de proveedor recibida.',
     rolesPorDefecto: [],
   },
+  {
+    proceso: 'INVENTARIO_FISICO',
+    label: 'Inventario Físico',
+    descripcion: 'Cerrar un conteo físico — genera los Movimientos AJUSTE reales por cada diferencia.',
+    rolesPorDefecto: [],
+  },
+  {
+    proceso: 'PROFORMA',
+    label: 'Proforma de venta',
+    descripcion: 'Aceptar una proforma enviada (la bloquea de edición y habilita convertirla en Despacho).',
+    rolesPorDefecto: [],
+  },
 ];
 
 export const PROCESO_APROBACION_VALUES: ProcesoAprobacion[] = PROCESOS_APROBACION.map((p) => p.proceso);

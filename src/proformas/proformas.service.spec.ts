@@ -105,6 +105,28 @@ describe('ProformasService', () => {
       const r = await service.update('e1', 'pf1', { notas: 'Urgente' });
       expect(r.notas).toBe('Urgente');
     });
+
+  });
+
+  describe('aceptar (#11b — aprobación configurable)', () => {
+    it('lanza ForbiddenException si la proforma no está ENVIADA', async () => {
+      prisma.withTenant.mockResolvedValueOnce({ id: 'pf1', estado: 'BORRADOR', items: [] }); // findOne
+      await expect(service.aceptar('e1', 'pf1')).rejects.toThrow(ForbiddenException);
+    });
+
+    it('marca ACEPTADA una proforma ENVIADA', async () => {
+      const txMock = {
+        proforma: { update: vi.fn().mockResolvedValue({ id: 'pf1', estado: 'ACEPTADA', items: [] }) },
+      };
+      prisma.withTenant
+        .mockResolvedValueOnce({ id: 'pf1', estado: 'ENVIADA', items: [] }) // findOne
+        .mockImplementationOnce((_e: string, fn: any) => fn(txMock));
+      const r = await service.aceptar('e1', 'pf1');
+      expect(r.estado).toBe('ACEPTADA');
+      expect(txMock.proforma.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { estado: 'ACEPTADA' } }),
+      );
+    });
   });
 
   describe('convertirADespacho', () => {

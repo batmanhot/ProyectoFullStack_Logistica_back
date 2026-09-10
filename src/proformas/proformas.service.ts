@@ -123,6 +123,9 @@ export class ProformasService {
     if (proforma.estado === 'ACEPTADA' || proforma.estado === 'RECHAZADA') {
       throw new ForbiddenException(`No se puede modificar una proforma en estado ${proforma.estado}`);
     }
+    // 'ACEPTADA' ya no es un valor válido de UpdateProformaDto — aceptar va por
+    // POST /proformas/:id/aceptar (aprobación configurable #11b). El
+    // ValidationPipe rechaza el intento antes de llegar acá.
 
     return this.prisma.withTenant(empresaId, (tx) =>
       tx.proforma.update({
@@ -134,6 +137,24 @@ export class ProformasService {
         },
         include: { items: true },
       }),
+    );
+  }
+
+  /**
+   * Marca ACEPTADA una proforma ENVIADA. Es un punto de aprobación (compromete
+   * la venta a esos precios, bloquea la edición y habilita convertirla en
+   * Despacho con reserva de stock) → gateado por AprobacionGuard,
+   * proceso PROFORMA (Configuración → Aprobaciones, #11b).
+   */
+  async aceptar(empresaId: string, id: string) {
+    const proforma = await this.findOne(empresaId, id);
+    if (proforma.estado !== 'ENVIADA') {
+      throw new ForbiddenException(
+        `Solo se puede aceptar una proforma ENVIADA (esta está en ${proforma.estado}).`,
+      );
+    }
+    return this.prisma.withTenant(empresaId, (tx) =>
+      tx.proforma.update({ where: { id }, data: { estado: 'ACEPTADA' }, include: { items: true } }),
     );
   }
 

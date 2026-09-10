@@ -9,7 +9,8 @@ export class UpdateProformaDto {
   @IsString()
   notas?: string;
 
+  // ACEPTADA sale por POST /proformas/:id/aceptar (aprobación configurable #11b).
   @IsOptional()
-  @IsIn(['ENVIADA', 'ACEPTADA', 'RECHAZADA', 'VENCIDA'])
-  estado?: 'ENVIADA' | 'ACEPTADA' | 'RECHAZADA' | 'VENCIDA';
+  @IsIn(['ENVIADA', 'RECHAZADA', 'VENCIDA'])
+  estado?: 'ENVIADA' | 'RECHAZADA' | 'VENCIDA';
 }
