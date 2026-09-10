@@ -60,14 +60,17 @@ services:
       - key: APP_DATABASE_URL
         sync: false
 
-      # ── Secretos JWT (4 identidades distintas) ────────────────────
+      # ── Secretos JWT (5 identidades distintas) ────────────────────
       # Render los genera aleatorios y distintos en el primer deploy.
-      # El arranque falla si alguno es placeholder, <20 chars o repetido.
+      # El arranque falla si alguno es placeholder, <20 chars o repetido
+      # (validateJwtSecrets exige los 5).
       - key: JWT_SECRET
         generateValue: true
       - key: JWT_REFRESH_SECRET
         generateValue: true
       - key: ADMIN_JWT_SECRET
+        generateValue: true
+      - key: ADMIN_JWT_REFRESH_SECRET
         generateValue: true
       - key: PORTAL_JWT_SECRET
         generateValue: true
@@ -77,6 +80,8 @@ services:
         value: 7d
       - key: ADMIN_JWT_EXPIRES_IN
         value: 8h
+      - key: ADMIN_JWT_REFRESH_EXPIRES_IN
+        value: 30d
       - key: PORTAL_JWT_EXPIRES_IN
         value: 365d
 
@@ -84,6 +89,14 @@ services:
       # PORT lo inyecta Render automáticamente — no declararlo.
       - key: FRONTEND_URL
         sync: false            # origin del frontend en prod (CORS). Obligatorio con NODE_ENV=production.
+
+      # ── Backups (canal de ingesta del job externo) ──────────────
+      # Token de servicio que valida BackupIngestGuard. Sin él la API arranca
+      # igual, pero los endpoints admin/backups/ingest/* devuelven 401 y el
+      # CI de backups no puede registrar nada. Mismo valor que el secret de
+      # GitHub Actions. Ver docs/BACKUP-RESTORE.md §2.
+      - key: BACKUP_INGEST_TOKEN
+        sync: false
 
       # ── PlatformAdmin (consola SuperAdmin) ───────────────────────
       # Sin estas, el seed cae al admin demo público. Definirlas ANTES del seed.
