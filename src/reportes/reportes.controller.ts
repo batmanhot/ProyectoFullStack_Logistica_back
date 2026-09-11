@@ -27,4 +27,13 @@ export class ReportesController {
   kpisOperativos(@TenantId() empresaId: string, @Query('dias') dias?: string) {
     return this.reportesService.kpisOperativos(empresaId, clamp(dias, 1, 90, 30));
   }
+
+  // Torre de Control de Almacenes — supervisión multi-locación (Owner / Gerente de
+  // Operaciones). Agrega, por almacén, valor de inventario, SKUs, criticidad
+  // de stock, vencimientos y actividad reciente.
+  @Permiso('panorama-almacenes')
+  @Get('almacenes-resumen')
+  almacenesResumen(@TenantId() empresaId: string) {
+    return this.reportesService.panoramaAlmacenes(empresaId);
+  }
 }

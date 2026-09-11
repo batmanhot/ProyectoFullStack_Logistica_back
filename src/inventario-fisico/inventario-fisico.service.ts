@@ -44,7 +44,14 @@ export class InventarioFisicoService {
     const inventario = await this.prisma.withTenant(empresaId, (tx) =>
       tx.inventarioFisico.findFirst({
         where: { id, empresaId },
-        include: { lineas: { include: { producto: { select: { sku: true, nombre: true, unidadMedida: true } } } } },
+        include: {
+          // Almacén/categoría/usuario: el detalle los necesita en la cabecera
+          // del conteo — antes solo `findAll` los traía (Hallazgo 2026-09-11).
+          almacen: { select: { nombre: true } },
+          categoria: { select: { nombre: true } },
+          usuario: { select: { nombre: true } },
+          lineas: { include: { producto: { select: { sku: true, nombre: true, unidadMedida: true } } } },
+        },
       }),
     );
     if (!inventario) throw new NotFoundException('Inventario físico no encontrado');
@@ -173,6 +180,24 @@ export class InventarioFisicoService {
         include: { lineas: true },
       });
     });
+  }
+
+  /**
+   * Elimina un conteo EN_CURSO. `create()` solo toma una foto del stock
+   * (`stockSistema`) — no reserva ni mueve nada real — así que borrar un
+   * inventario que todavía no se cerró no tiene ningún efecto sobre el
+   * stock. Uno CERRADO ya generó Movimientos AJUSTE reales: no se puede
+   * deshacer borrándolo (para revertirlo habría que hacer un ajuste inverso).
+   */
+  async eliminar(empresaId: string, id: string) {
+    const inventario = await this.findOne(empresaId, id);
+    if (inventario.estado !== 'EN_CURSO') {
+      throw new BadRequestException(
+        'Solo se puede eliminar un inventario físico EN CURSO — uno CERRADO ya generó ajustes de stock reales.',
+      );
+    }
+    await this.prisma.withTenant(empresaId, (tx) => tx.inventarioFisico.delete({ where: { id } }));
+    return { ok: true };
   }
 
   private validarAlmacen(empresaId: string, almacenId: string) {

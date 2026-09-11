@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
 import { CurrentUser, TenantId } from '../common/decorators/tenant.decorator';
 import { Permiso } from '../common/decorators/permiso.decorator';
 import { Aprobacion } from '../common/decorators/aprobacion.decorator';
@@ -53,5 +53,11 @@ export class InventarioFisicoController {
   @Post(':id/cerrar')
   cerrar(@TenantId() empresaId: string, @Param('id') id: string) {
     return this.inventarioFisicoService.cerrar(empresaId, id);
+  }
+
+  /** Solo EN_CURSO — uno CERRADO ya generó ajustes reales de stock. */
+  @Delete(':id')
+  eliminar(@TenantId() empresaId: string, @Param('id') id: string) {
+    return this.inventarioFisicoService.eliminar(empresaId, id);
   }
 }

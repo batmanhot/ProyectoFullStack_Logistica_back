@@ -208,4 +208,29 @@ describe('InventarioFisicoService', () => {
       expect(movimientosMock.crearEnTransaccion).not.toHaveBeenCalled();
     });
   });
+
+  // ── eliminar ───────────────────────────────────────────────────────────────
+  describe('eliminar', () => {
+    it('borra un inventario EN_CURSO', async () => {
+      vi.spyOn(service, 'findOne').mockResolvedValue({ ...INV_BASE, estado: 'EN_CURSO' } as any);
+      const txMock = { inventarioFisico: { delete: vi.fn().mockResolvedValue({}) } };
+      prisma.withTenant.mockImplementation((_e: string, fn: any) => fn(txMock));
+
+      const r = await service.eliminar('e1', 'inv-1');
+
+      expect(txMock.inventarioFisico.delete).toHaveBeenCalledWith({ where: { id: 'inv-1' } });
+      expect(r).toEqual({ ok: true });
+    });
+
+    it('rechaza borrar uno CERRADO', async () => {
+      vi.spyOn(service, 'findOne').mockResolvedValue({ ...INV_BASE, estado: 'CERRADO' } as any);
+      await expect(service.eliminar('e1', 'inv-1')).rejects.toThrow(BadRequestException);
+      expect(prisma.withTenant).not.toHaveBeenCalled();
+    });
+
+    it('propaga NotFoundException si el inventario no existe', async () => {
+      vi.spyOn(service, 'findOne').mockRejectedValue(new NotFoundException('Inventario físico no encontrado'));
+      await expect(service.eliminar('e1', 'x')).rejects.toThrow(NotFoundException);
+    });
+  });
 });

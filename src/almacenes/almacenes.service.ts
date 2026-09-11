@@ -3,9 +3,36 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateAlmacenDto } from './dto/create-almacen.dto';
 import { UpdateAlmacenDto } from './dto/update-almacen.dto';
 
+// Campos que el tenant puede escribir en un Almacén. `nombre` va aparte en
+// create() (es obligatorio); el resto es la ubicación física opcional que
+// alimenta la Torre de Control de Almacenes. Un valor `null` explícito limpia la
+// columna; `undefined` la deja como está.
+const CAMPOS_EDITABLES = [
+  'nombre',
+  'activo',
+  'direccion',
+  'ciudad',
+  'region',
+  'pais',
+  'latitud',
+  'longitud',
+  'responsable',
+  'telefono',
+] as const;
+
 @Injectable()
 export class AlmacenesService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private soloDefinidos(dto: CreateAlmacenDto | UpdateAlmacenDto) {
+    const data: Record<string, unknown> = {};
+    for (const campo of CAMPOS_EDITABLES) {
+      if ((dto as Record<string, unknown>)[campo] !== undefined) {
+        data[campo] = (dto as Record<string, unknown>)[campo];
+      }
+    }
+    return data;
+  }
 
   findAll(empresaId: string, busqueda?: string, incluirInactivos = false) {
     return this.prisma.withTenant(empresaId, (tx) =>
@@ -30,20 +57,14 @@ export class AlmacenesService {
 
   create(empresaId: string, dto: CreateAlmacenDto) {
     return this.prisma.withTenant(empresaId, (tx) =>
-      tx.almacen.create({ data: { empresaId, nombre: dto.nombre } }),
+      tx.almacen.create({ data: { empresaId, ...this.soloDefinidos(dto), nombre: dto.nombre } }),
     );
   }
 
   async update(empresaId: string, id: string, dto: UpdateAlmacenDto) {
     await this.findOne(empresaId, id);
     return this.prisma.withTenant(empresaId, (tx) =>
-      tx.almacen.update({
-        where: { id },
-        data: {
-          ...(dto.nombre !== undefined && { nombre: dto.nombre }),
-          ...(dto.activo !== undefined && { activo: dto.activo }),
-        },
-      }),
+      tx.almacen.update({ where: { id }, data: this.soloDefinidos(dto) }),
     );
   }
 

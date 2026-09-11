@@ -271,6 +271,18 @@ model Almacen {
   activo    Boolean  @default(true)
   createdAt DateTime @default(now())
 
+  // Ubicación física — la usa el Panorama de Almacenes (supervisión
+  // multi-locación del Owner / Gerente de Operaciones). Todo opcional: los
+  // almacenes creados antes de esto quedan sin ubicación hasta que se editen.
+  direccion   String?
+  ciudad      String?
+  region      String? // departamento / provincia / estado
+  pais        String?
+  latitud     Decimal? @db.Decimal(10, 7)
+  longitud    Decimal? @db.Decimal(10, 7)
+  responsable String? // encargado de la locación (texto libre, no es un Usuario del sistema)
+  telefono    String?
+
   ubicaciones        Ubicacion[]
   inventario         Inventario[]
   movimientos        Movimiento[]       @relation("MovimientoAlmacen")

@@ -38,6 +38,9 @@ const ROLES_BASE: { codigo: string; label: string; permisos: string[] }[] = [
       // Auditoría de seguridad 2026-07-29 (Hallazgo Alto #7): gestión de
       // catálogos/estructura — antes sin gating, ahora requieren estos permisos.
       'almacenes', 'categorias', 'areas-internas',
+      // Panorama de Almacenes (2026-09-10): supervisión multi-locación para el
+      // mando que está fuera de la operación diaria. Owner/Admin entran por '*'.
+      'panorama-almacenes',
       // Fase 10 (Gestión Comercial, 2026-08-31): visibilidad del pipeline
       // comercial para el mando operativo, no solo para el ejecutivo de ventas.
       'oportunidades',
