@@ -11,6 +11,8 @@ function makeTx(overrides: any = {}) {
       update:    vi.fn().mockImplementation(({ data }) => Promise.resolve({ id: 'lp1', ...data })),
       delete:    vi.fn().mockResolvedValue({ id: 'lp1' }),
     },
+    cliente:  { count: vi.fn().mockResolvedValue(0) },
+    proforma: { count: vi.fn().mockResolvedValue(0) },
     ...overrides,
   };
 }
@@ -84,13 +86,35 @@ describe('ListasPreciosService', () => {
       await expect(service.remove('e1', 'x')).rejects.toThrow(NotFoundException);
     });
 
-    it('llama delete físico (listas de precios se pueden eliminar)', async () => {
+    it('llama delete físico cuando no la usa ningún cliente ni proforma', async () => {
       const tx = makeTx();
       prisma.withTenant
         .mockResolvedValueOnce({ id: 'lp1' })
         .mockImplementationOnce((_e: string, fn: any) => fn(tx));
       await service.remove('e1', 'lp1');
       expect(tx.listaPrecios.delete).toHaveBeenCalled();
+    });
+
+    // Las FK de Cliente.listaPrecioId/Proforma.listaPrecioId son ON DELETE
+    // SET NULL — sin este chequeo, borrar una lista en uso "funcionaba" pero
+    // les quitaba la lista asignada en silencio (y a las proformas, la
+    // trazabilidad de qué lista usaron). Se bloquea en vez de eso.
+    it('bloquea el borrado si hay clientes que la tienen asignada', async () => {
+      const tx = makeTx({ cliente: { count: vi.fn().mockResolvedValue(2) } });
+      prisma.withTenant
+        .mockResolvedValueOnce({ id: 'lp1' })
+        .mockImplementationOnce((_e: string, fn: any) => fn(tx));
+      await expect(service.remove('e1', 'lp1')).rejects.toThrow(/2 clientes/);
+      expect(tx.listaPrecios.delete).not.toHaveBeenCalled();
+    });
+
+    it('bloquea el borrado si hay proformas que la referencian', async () => {
+      const tx = makeTx({ proforma: { count: vi.fn().mockResolvedValue(1) } });
+      prisma.withTenant
+        .mockResolvedValueOnce({ id: 'lp1' })
+        .mockImplementationOnce((_e: string, fn: any) => fn(tx));
+      await expect(service.remove('e1', 'lp1')).rejects.toThrow(/1 proforma/);
+      expect(tx.listaPrecios.delete).not.toHaveBeenCalled();
     });
   });
 

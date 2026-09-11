@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateListaPreciosDto } from './dto/create-lista-precios.dto';
 import { UpdateListaPreciosDto } from './dto/update-lista-precios.dto';
@@ -57,11 +57,36 @@ export class ListasPreciosService {
     );
   }
 
+  // A diferencia del resto de tablas maestras (Clientes, Productos, Almacenes,
+  // etc. — todas soft-delete, `activo: false`), acá SÍ se borra la fila de
+  // verdad. `activa` no sirve para esto: es un campo de negocio real e
+  // independiente ("¿esta lista está vigente para ofrecerse?"), ya editable
+  // desde el formulario — reusarlo como soft-delete lo confundiría con eso, y
+  // además `findAll()` no lo filtra (la lista "eliminada" seguiría
+  // apareciendo). Como las FK de Cliente/Proforma son `ON DELETE SET NULL`,
+  // sin este chequeo el borrado "tenía éxito" en silencio y les quitaba la
+  // lista asignada sin avisar de verdad (el diálogo del front solo mencionaba
+  // a los clientes, no la trazabilidad de proformas históricas). Ahora se
+  // bloquea si hay referencias — desactivarla (`activa: false`) es el camino
+  // correcto para retirarla sin perder ese historial.
   async remove(empresaId: string, id: string) {
     await this.findOne(empresaId, id);
-    return this.prisma.withTenant(empresaId, (tx) =>
-      tx.listaPrecios.delete({ where: { id } }),
-    );
+    return this.prisma.withTenant(empresaId, async (tx) => {
+      const [clientes, proformas] = await Promise.all([
+        tx.cliente.count({ where: { listaPrecioId: id } }),
+        tx.proforma.count({ where: { listaPrecioId: id } }),
+      ]);
+      if (clientes > 0 || proformas > 0) {
+        const partes = [
+          clientes > 0 && `${clientes} cliente${clientes === 1 ? '' : 's'}`,
+          proformas > 0 && `${proformas} proforma${proformas === 1 ? '' : 's'}`,
+        ].filter(Boolean);
+        throw new BadRequestException(
+          `No se puede eliminar: la usan ${partes.join(' y ')}. Márcala como "Inactiva" en su lugar.`,
+        );
+      }
+      return tx.listaPrecios.delete({ where: { id } });
+    });
   }
 
   /** Actualiza o inserta un precio especial para un producto específico. */
