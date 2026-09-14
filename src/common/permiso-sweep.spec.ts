@@ -51,6 +51,10 @@ const ALLOWLIST: Record<string, string[]> = {
   // Único endpoint del controller, sin escritura que proteger.
   'inventario/inventario.controller.ts': ['findAll'],
   'cotizaciones/cotizaciones.controller.ts': ['findAll', 'findOne'],
+  // 'listar' expone solo qué rol(es) aprueban cada proceso — cualquier
+  // usuario autenticado lo necesita para saber si su rol puede aprobar
+  // (Alertas.jsx). Editar sigue exclusivo de 'configuracion'.
+  'aprobaciones/aprobaciones.controller.ts': ['listar'],
   'movimientos/movimientos.controller.ts': ['findAll', 'findOne', 'kardex'],
   'roles/roles.controller.ts': ['verificarPermiso'],
   'auth/auth.controller.ts': ['logout', 'perfil'], // GET /auth/me — vista 360° del propio usuario, cualquier logueado, solo lectura

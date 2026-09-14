@@ -94,6 +94,7 @@ model Empresa {
   alertasEnvio              AlertaEnvio[]
   auditoriasPlataforma      AuditoriaPlataforma[]
   reglasAprobacion          ReglaAprobacion[]
+  atencionesAlerta          AtencionAlerta[]
 
   @@map("empresas")
 }
@@ -155,6 +156,7 @@ model Usuario {
   clientesResponsable          Cliente[]               @relation("ClienteResponsableComercial")
   oportunidadesResponsable     Oportunidad[]           @relation("OportunidadResponsable")
   actividadesComerciales       ActividadComercial[]    @relation("ActividadComercialUsuario")
+  atencionesAlertaRegistradas  AtencionAlerta[]
 
   @@unique([empresaId, email]) // email único POR tenant, no global
   @@index([empresaId])
@@ -1244,6 +1246,34 @@ model ReglaAprobacion {
   @@unique([empresaId, proceso])
   @@index([empresaId])
   @@map("reglas_aprobacion")
+}
+
+// Centro de Alertas (2026-09-13) — las alertas en sí NO son filas de base de
+// datos: se calculan al vuelo en el frontend (utils/alertas.js) a partir de
+// datos reales (stock, OC, despachos, etc.). Esta tabla registra únicamente
+// que un responsable la ATENDIÓ y qué acción tomó — la existencia de la fila
+// (única por tipo+clave) ES el estado "Atendida"; si no hay fila, está
+// "Pendiente". `clave` es el identificador estable de la instancia real
+// detrás de la alerta (productoId para stock/vencimiento, numero de OC,
+// despachoId, pedidoInternoId, etc. — lo decide el frontend al calcular cada
+// alerta). No se borra ni se oculta la alerta si la condición de fondo sigue
+// vigente (decisión explícita del usuario): se sigue viendo, marcada
+// "Atendida" con la nota, para no esconder un problema real sin resolver.
+model AtencionAlerta {
+  id         String   @id @default(cuid())
+  empresaId  String
+  empresa    Empresa  @relation(fields: [empresaId], references: [id])
+  tipo       String // mismo código de TIPOS en utils/alertas.js (ej. 'stock_critico', 'oc_pendiente')
+  clave      String // identificador estable de la instancia real detrás de la alerta
+  notaAccion String // qué hizo el responsable para atenderla
+  usuarioId  String
+  usuario    Usuario  @relation(fields: [usuarioId], references: [id])
+  fecha      DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([empresaId, tipo, clave])
+  @@index([empresaId])
+  @@map("atenciones_alerta")
 }
 
 // ─────────────────────────────────────────────────────────────────
