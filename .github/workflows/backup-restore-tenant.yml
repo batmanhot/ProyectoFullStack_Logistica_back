@@ -62,7 +62,10 @@ jobs:
         run: |
           sudo apt-get update
           # Ver nota en backup-nightly.yml — pg_dump 16 (default de apt) no
-          # puede volcar la Postgres 18 de Render.
+          # puede volcar la Postgres 18 de Render, y el repo de PGDG con la
+          # v18 no viene configurado en el runner: hay que sumarlo antes.
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get install -y postgresql-client-18 age
           echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
           # Ver nota en backup-nightly.yml — npm 10.x rechaza `npm ci` por un

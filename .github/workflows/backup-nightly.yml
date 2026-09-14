@@ -35,9 +35,12 @@ jobs:
           # ubuntu-latest — pg_dump se niega a volcar un servidor MÁS NUEVO
           # que él mismo (confirmado 2026-09-14: Render corre Postgres 18,
           # pg_dump 16 tira "aborting because of server version mismatch").
-          # El repo apt.postgresql.org ya viene configurado en el runner
-          # (de ahí que el 16 resuelto tuviera sufijo "pgdg24.04"), así que
-          # alcanza con pedir la versión 18 explícita — sin agregar repos.
+          # El repo apt.postgresql.org NO viene configurado en el runner
+          # (confirmado 2026-09-14: "E: Unable to locate package
+          # postgresql-client-18" al pedirlo directo) — hay que sumarlo con
+          # el script oficial de PGDG antes de poder instalar la v18.
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get install -y postgresql-client-18 age
           echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
           # npm 10.x (el que trae Node 22) rechaza `npm ci` por un peer
