@@ -31,6 +31,11 @@ jobs:
       - name: Instalar herramientas
         run: |
           sudo apt-get update && sudo apt-get install -y postgresql-client age
+          # npm 10.x (el que trae Node 22) rechaza `npm ci` por un peer
+          # opcional de @prisma/config>c12 que valida distinto que npm 11.x —
+          # confirmado 2026-09-14, es una diferencia de versión de npm, no
+          # del lockfile (con npm 11 el mismo package-lock.json instala limpio).
+          npm install -g npm@11
           npm ci
           npm i --no-save @aws-sdk/client-s3
           npx prisma generate

@@ -17,6 +17,12 @@ jobs:
           node-version: 22
           cache: npm
 
+      # npm 10.x (el que trae Node 22 por defecto) rechaza `npm ci` con
+      # "Missing: magicast@0.3.5 from lock file" — un peer opcional de
+      # @prisma/config>c12 que ese npm valida más estricto que npm 11.x.
+      # Confirmado 2026-09-14: con npm 11 el mismo package-lock.json instala
+      # limpio (exit 0); es una diferencia de versión de npm, no del lockfile.
+      - run: npm install -g npm@11
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm run test:cov

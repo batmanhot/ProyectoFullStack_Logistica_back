@@ -36,6 +36,9 @@ jobs:
       - name: Instalar herramientas
         run: |
           sudo apt-get update && sudo apt-get install -y postgresql-client age
+          # Ver nota en backup-nightly.yml — npm 10.x rechaza `npm ci` por un
+          # peer opcional de @prisma/config>c12, npm 11.x no.
+          npm install -g npm@11
           npm ci
           npm i --no-save @aws-sdk/client-s3
           npx prisma generate
