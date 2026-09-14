@@ -9,6 +9,22 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # prisma.service.spec.ts abre una transacción real (withTenant -> $transaction)
+    # para probar que rechaza un empresaId malicioso ANTES de ejecutar el SET
+    # LOCAL — pero Prisma necesita conectar de verdad para siquiera abrir esa
+    # transacción, así que hace falta una Postgres alcanzable (no le importa el
+    # esquema/las migraciones, nunca llega a tocar ninguna tabla real). Mismo
+    # patrón que ya usa backup-restore-test.yml.
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: test, POSTGRES_DB: test }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      APP_DATABASE_URL: postgres://postgres:test@localhost:5432/test
     steps:
       - uses: actions/checkout@v4
 
