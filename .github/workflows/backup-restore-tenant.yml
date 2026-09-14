@@ -60,7 +60,11 @@ jobs:
 
       - name: Instalar herramientas
         run: |
-          sudo apt-get update && sudo apt-get install -y postgresql-client age
+          sudo apt-get update
+          # Ver nota en backup-nightly.yml — pg_dump 16 (default de apt) no
+          # puede volcar la Postgres 18 de Render.
+          sudo apt-get install -y postgresql-client-18 age
+          echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
           # Ver nota en backup-nightly.yml — npm 10.x rechaza `npm ci` por un
           # peer opcional de @prisma/config>c12, npm 11.x no.
           npm install -g npm@11
