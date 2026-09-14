@@ -52,8 +52,13 @@ export class RolesService {
    * `viaComodin` se usa internamente por PermisosGuard (Fase 3b) para saber si
    * debe además cruzar contra el plan — Owner/Admin ('*') bypasean ese cruce.
    */
-  async verificarPermiso(empresaId: string, rolId: string, modulo: string) {
-    if (!rolId || !modulo) {
+  // `modulo` acepta un string o un array (match por CUALQUIERA de la
+  // lista) — necesario para endpoints alcanzables tanto por el permiso
+  // completo de un módulo como por un permiso angosto que da acceso
+  // parcial al mismo recurso (ej. 'despachos' vs 'despachos-aprobar').
+  async verificarPermiso(empresaId: string, rolId: string, modulo: string | string[]) {
+    const modulos = Array.isArray(modulo) ? modulo : [modulo];
+    if (!rolId || modulos.length === 0 || modulos.some((m) => !m)) {
       throw new BadRequestException('rolId y modulo son obligatorios');
     }
     // Hallazgo Crítico #3 (auditoría 2026-07-29): sin el filtro empresaId/null
@@ -69,7 +74,7 @@ export class RolesService {
       throw new BadRequestException('Rol no encontrado o no pertenece a esta empresa');
     }
     const viaComodin = rol.permisos.some((p) => p.modulo === '*');
-    const permitido = viaComodin || rol.permisos.some((p) => p.modulo === modulo);
+    const permitido = viaComodin || rol.permisos.some((p) => modulos.includes(p.modulo));
     return { permitido, viaComodin };
   }
 }

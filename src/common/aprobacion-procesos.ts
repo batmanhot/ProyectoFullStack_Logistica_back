@@ -5,12 +5,27 @@ import { ProcesoAprobacion } from '@prisma/client';
  * valor POR DEFECTO — el que reproduce el comportamiento previo al feature:
  *
  *   · PEDIDO_INTERNO → lo que exigía el `@SoloRoles` hardcodeado.
+ *   · DESPACHO → mismo trío que PEDIDO_INTERNO desde 2026-09-12 (ver nota
+ *     abajo) — antes vacío, ahora con separación de funciones real.
  *   · el resto → [] : hoy basta el permiso de módulo (`@Permiso(...)`), no hay
  *     restricción extra de rol.
  *
  * Lo usan: el seed / `sembrarReglasAprobacion` (bases nuevas), el
  * AprobacionesService (rellena procesos sin fila) y AprobacionGuard (fallback
- * si la fila no existe todavía). Owner/Admin ('*') aprueban siempre, aparte.
+ * si la fila no existe todavía). Owner ('*') aprueba siempre, aparte — Admin
+ * YA NO (Alcance de roles, 2026-09-11: dejó de tener '*'), por eso figura
+ * explícito en PEDIDO_INTERNO y DESPACHO abajo.
+ *
+ * DESPACHO (2026-09-12): el usuario probando con Almacenero notó que podía
+ * crear Y aprobar su propio despacho — el default vacío de antes dejaba
+ * "basta el permiso de módulo" como única barrera, vaciando en la práctica
+ * el sentido del permiso angosto 'despachos-aprobar' (Admin/Gerente de
+ * Operaciones supervisan sin operar). Se cambió el default a
+ * ['admin','supervisor','gerente-operaciones'] — pero por decisión
+ * explícita del usuario esto SOLO aplica a negocios nuevos (vía
+ * `sembrarReglasAprobacion` al alta); los negocios ya existentes conservan
+ * su fila actual (`[]` si nunca la tocaron) y se configuran a mano desde
+ * Configuración → Aprobaciones, sin migración de backfill.
  */
 export interface ProcesoAprobacionMeta {
   proceso: ProcesoAprobacion;
@@ -24,13 +39,22 @@ export const PROCESOS_APROBACION: ProcesoAprobacionMeta[] = [
     proceso: 'PEDIDO_INTERNO',
     label: 'Pedido Interno',
     descripcion: 'Aprobar o rechazar un pedido interno enviado (ENVIADO → APROBADO).',
-    rolesPorDefecto: ['supervisor', 'gerente-operaciones'],
+    rolesPorDefecto: ['admin', 'supervisor', 'gerente-operaciones'],
   },
   {
     proceso: 'DESPACHO',
     label: 'Despacho',
     descripcion: 'Aprobar un despacho para que pase a picking (PEDIDO → APROBADO).',
-    rolesPorDefecto: [],
+    // 2026-09-12: antes vacío ("basta el permiso de módulo") — un negocio
+    // que nunca tocara esta pantalla dejaba a Almacenero/Despachador
+    // autoaprobar su propio pedido (crea Y aprueba, sin separación de
+    // funciones), justo lo que el permiso angosto 'despachos-aprobar' de
+    // Admin/Gerente de Operaciones existe para evitar. Mismo trío que
+    // Pedido Interno. Solo rige para negocios NUEVOS (sembrarReglasAprobacion
+    // al alta) — decisión explícita del usuario de no retro-aplicarlo a
+    // negocios ya existentes vía migración; ahí se configura a mano desde
+    // Configuración → Aprobaciones.
+    rolesPorDefecto: ['admin', 'supervisor', 'gerente-operaciones'],
   },
   {
     proceso: 'PEDIDO_PORTAL',

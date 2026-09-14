@@ -7,11 +7,16 @@ import { CreatePedidoInternoDto } from './dto/create-pedido-interno.dto';
 import { UpdatePedidoInternoDto } from './dto/update-pedido-interno.dto';
 import { AprobarPedidoDto, RechazarPedidoDto } from './dto/aprobar-rechazar.dto';
 
-@Permiso('pedidos-internos')
+// Sin @Permiso a nivel de clase (antes 'pedidos-internos' cubría todo el
+// controller) — Admin Tenant necesita poder aprobar/rechazar SIN el resto
+// del módulo (crear, picking, entregar, etc.), mismo patrón que
+// proyectos.controller.ts. findAll/findOne/productos-disponibles aceptan el
+// permiso completo O el angosto de aprobar.
 @Controller('pedidos-internos')
 export class PedidosInternosController {
   constructor(private readonly pedidosInternosService: PedidosInternosService) {}
 
+  @Permiso(['pedidos-internos', 'pedidos-internos-aprobar'])
   @Get()
   findAll(
     @TenantId() empresaId: string,
@@ -26,20 +31,23 @@ export class PedidosInternosController {
    * Catálogo mínimo (id/sku/nombre/unidad — sin costos ni stock) de productos
    * activos para armar la solicitud. El rol 'solicitante' no tiene el permiso
    * 'inventario' que exige GET /productos, pero sí necesita elegir qué pedir;
-   * esta ruta vive gateada por el mismo @Permiso('pedidos-internos') del
+   * esta ruta acepta el mismo permiso (completo o angosto) que el resto del
    * controller, así que no amplía lo que ese rol puede ver. Debe declararse
    * antes de ':id' para que Nest no la confunda con un id de pedido.
    */
+  @Permiso(['pedidos-internos', 'pedidos-internos-aprobar'])
   @Get('productos-disponibles')
   productosDisponibles(@TenantId() empresaId: string) {
     return this.pedidosInternosService.productosDisponibles(empresaId);
   }
 
+  @Permiso(['pedidos-internos', 'pedidos-internos-aprobar'])
   @Get(':id')
   findOne(@TenantId() empresaId: string, @Param('id') id: string) {
     return this.pedidosInternosService.findOne(empresaId, id);
   }
 
+  @Permiso('pedidos-internos')
   @Post()
   create(
     @TenantId() empresaId: string,
@@ -49,6 +57,7 @@ export class PedidosInternosController {
     return this.pedidosInternosService.create(empresaId, user.sub, dto);
   }
 
+  @Permiso('pedidos-internos')
   @Put(':id')
   update(
     @TenantId() empresaId: string,
@@ -58,6 +67,7 @@ export class PedidosInternosController {
     return this.pedidosInternosService.update(empresaId, id, dto);
   }
 
+  @Permiso('pedidos-internos')
   @Post(':id/enviar')
   enviar(@TenantId() empresaId: string, @Param('id') id: string) {
     return this.pedidosInternosService.enviar(empresaId, id);
@@ -67,7 +77,10 @@ export class PedidosInternosController {
   // 'pedidos-internos' (preparan y entregan), pero Aprobar/Rechazar compromete
   // gasto/consumo del proyecto. Quién puede hacerlo lo define el tenant en
   // Configuración → Aprobaciones (#11b); se siembra con Supervisor + Gerente
-  // de Operaciones = el @SoloRoles que había antes. Owner/Admin ('*') siempre.
+  // de Operaciones = el @SoloRoles que había antes. Owner ('*') siempre.
+  // 'pedidos-internos-aprobar' es el permiso angosto: Admin Tenant aprueba
+  // sin tener el módulo completo.
+  @Permiso(['pedidos-internos', 'pedidos-internos-aprobar'])
   @Aprobacion('PEDIDO_INTERNO')
   @Post(':id/aprobar')
   aprobar(
@@ -79,6 +92,7 @@ export class PedidosInternosController {
     return this.pedidosInternosService.aprobar(empresaId, id, user.sub, dto);
   }
 
+  @Permiso(['pedidos-internos', 'pedidos-internos-aprobar'])
   @Aprobacion('PEDIDO_INTERNO')
   @Post(':id/rechazar')
   rechazar(
@@ -90,12 +104,14 @@ export class PedidosInternosController {
     return this.pedidosInternosService.rechazar(empresaId, id, user.sub, dto);
   }
 
+  @Permiso('pedidos-internos')
   @Post(':id/picking')
   marcarPicking(@TenantId() empresaId: string, @Param('id') id: string) {
     return this.pedidosInternosService.marcarPicking(empresaId, id);
   }
 
   /** Genera Movimientos SALIDA reales por cada ítem. */
+  @Permiso('pedidos-internos')
   @Post(':id/entregar')
   entregar(
     @TenantId() empresaId: string,
@@ -105,6 +121,7 @@ export class PedidosInternosController {
     return this.pedidosInternosService.entregar(empresaId, id, user.sub);
   }
 
+  @Permiso('pedidos-internos')
   @Post(':id/confirmar-recibo')
   confirmarRecibo(@TenantId() empresaId: string, @Param('id') id: string) {
     return this.pedidosInternosService.confirmarRecibo(empresaId, id);

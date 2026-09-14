@@ -62,9 +62,42 @@ describe('AprobacionGuard', () => {
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
   });
 
-  it('permite a Owner/Admin (permiso *) aunque no estén en la lista', async () => {
+  it('permite a Owner (permiso *) aunque no esté en la lista', async () => {
     prisma.withTenant.mockImplementation(
-      withTenantDe({ rolesAprobadores: ['supervisor'] }, { codigo: 'admin', permisos: [{ modulo: '*' }] }),
+      withTenantDe({ rolesAprobadores: ['supervisor'] }, { codigo: 'owner', permisos: [{ modulo: '*' }] }),
+    );
+    const ctx = makeCtx({ empresaId: 'e1', rolId: 'r1' }, 'PEDIDO_INTERNO', reflector);
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+  });
+
+  // Alcance de roles (2026-09-11): admin dejó de tener '*' — ahora depende,
+  // como cualquier otro rol, de estar listado en rolesAprobadores (o del
+  // fallback por defecto, que sí lo incluye para PEDIDO_INTERNO).
+  it('rechaza a admin SIN comodín si no está en la lista configurada', async () => {
+    prisma.withTenant.mockImplementation(
+      withTenantDe(
+        { rolesAprobadores: ['supervisor'] },
+        { codigo: 'admin', permisos: [{ modulo: 'pedidos-internos-aprobar' }] },
+      ),
+    );
+    const ctx = makeCtx({ empresaId: 'e1', rolId: 'r1' }, 'PEDIDO_INTERNO', reflector);
+    await expect(guard.canActivate(ctx)).rejects.toThrow(ForbiddenException);
+  });
+
+  it('permite a admin SIN comodín cuando SÍ está en la lista configurada', async () => {
+    prisma.withTenant.mockImplementation(
+      withTenantDe(
+        { rolesAprobadores: ['admin', 'supervisor'] },
+        { codigo: 'admin', permisos: [{ modulo: 'pedidos-internos-aprobar' }] },
+      ),
+    );
+    const ctx = makeCtx({ empresaId: 'e1', rolId: 'r1' }, 'PEDIDO_INTERNO', reflector);
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+  });
+
+  it('sin fila de regla → el default de PEDIDO_INTERNO ya incluye a admin', async () => {
+    prisma.withTenant.mockImplementation(
+      withTenantDe(null, { codigo: 'admin', permisos: [{ modulo: 'pedidos-internos-aprobar' }] }),
     );
     const ctx = makeCtx({ empresaId: 'e1', rolId: 'r1' }, 'PEDIDO_INTERNO', reflector);
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
@@ -96,11 +129,21 @@ describe('AprobacionGuard', () => {
     await expect(guard.canActivate(no)).rejects.toThrow(ForbiddenException);
   });
 
-  it('sin fila de regla → DESPACHO cae en [] (no restringe)', async () => {
-    prisma.withTenant.mockImplementation(
+  // 2026-09-12: el default de DESPACHO dejó de ser [] — un Almacenero podía
+  // crear Y aprobar su propio despacho (sin separación de funciones), justo
+  // lo que 'despachos-aprobar' (Admin/Gerente de Operaciones) existe para
+  // evitar. Ahora, sin fila de regla, cae en el mismo trío que PEDIDO_INTERNO.
+  it('sin fila de regla → DESPACHO cae en [admin, supervisor, gerente-operaciones] (Almacenero ya no autoaprueba)', async () => {
+    prisma.withTenant.mockImplementationOnce(
       withTenantDe(null, { codigo: 'almacenero', permisos: [{ modulo: 'despachos' }] }),
     );
-    const ctx = makeCtx({ empresaId: 'e1', rolId: 'r1' }, 'DESPACHO', reflector);
-    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    const no = makeCtx({ empresaId: 'e1', rolId: 'r1' }, 'DESPACHO', reflector);
+    await expect(guard.canActivate(no)).rejects.toThrow(ForbiddenException);
+
+    prisma.withTenant.mockImplementationOnce(
+      withTenantDe(null, { codigo: 'supervisor', permisos: [{ modulo: 'despachos' }] }),
+    );
+    const ok = makeCtx({ empresaId: 'e1', rolId: 'r2' }, 'DESPACHO', reflector);
+    await expect(guard.canActivate(ok)).resolves.toBe(true);
   });
 });

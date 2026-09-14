@@ -28,7 +28,7 @@ export class PermisosGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const modulo = this.reflector.getAllAndOverride<string>(PERMISO_KEY, [
+    const modulo = this.reflector.getAllAndOverride<string | string[]>(PERMISO_KEY, [
       context.getHandler(),
       context.getClass(),
     ]);
@@ -41,7 +41,12 @@ export class PermisosGuard implements CanActivate {
     if (!permitido) return false;
     if (viaComodin) return true;
 
-    const grupo = PERMISO_A_GRUPO_PLAN[modulo];
+    // Con varios módulos posibles (permiso completo + angosto), el cruce de
+    // plan usa el primero que tenga grupo asociado — en la práctica el
+    // permiso completo y el angosto de un mismo recurso comparten grupo
+    // (ver PERMISO_A_GRUPO_PLAN), así que da igual cuál matcheó realmente.
+    const modulos = Array.isArray(modulo) ? modulo : [modulo];
+    const grupo = modulos.map((m) => PERMISO_A_GRUPO_PLAN[m]).find(Boolean);
     if (!grupo) return true;
 
     const empresa = await this.prisma.empresa.findUnique({ where: { id: empresaId }, select: { plan: true } });

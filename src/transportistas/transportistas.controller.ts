@@ -6,11 +6,15 @@ import { TransportistasService } from './transportistas.service';
 import { CreateTransportistaDto } from './dto/create-transportista.dto';
 import { UpdateTransportistaDto } from './dto/update-transportista.dto';
 
-@Permiso('transportes')
 @Controller('transportistas')
 export class TransportistasController {
   constructor(private readonly transportistasService: TransportistasService) {}
 
+  // Lectura abierta — mismo criterio que Proveedores/Clientes/Almacenes
+  // (Hallazgo Alto #7, auditoría 2026-07-29): Despachos.jsx necesita listar
+  // transportistas para asignar guía, incluso para roles como Almacenero que
+  // operan despachos pero no tienen el módulo 'transportes' completo. Antes
+  // el @Permiso a nivel de clase les dejaba el selector vacío.
   @Get()
   findAll(@TenantId() empresaId: string, @Query('incluirInactivos') incluirInactivos?: string) {
     return this.transportistasService.findAll(empresaId, incluirInactivos === 'true');
@@ -27,13 +31,17 @@ export class TransportistasController {
   // el backend no lo hacía cumplir: podía crear/editar/eliminar
   // transportistas llamando la API directo. @SoloRoles cierra ese hueco sin
   // tocarle nada a Coordinador de Transporte, que sí gestiona esto de verdad.
-  @SoloRoles('gerente-operaciones', 'coordinador-transporte')
+  // Admin (Alcance de roles 2026-09-11) gestiona este catálogo estructural
+  // igual que Almacenes/Categorías/Áreas Internas/Proyectos.
+  @Permiso('transportes')
+  @SoloRoles('gerente-operaciones', 'coordinador-transporte', 'admin')
   @Post()
   create(@TenantId() empresaId: string, @Body() dto: CreateTransportistaDto) {
     return this.transportistasService.create(empresaId, dto);
   }
 
-  @SoloRoles('gerente-operaciones', 'coordinador-transporte')
+  @Permiso('transportes')
+  @SoloRoles('gerente-operaciones', 'coordinador-transporte', 'admin')
   @Put(':id')
   update(
     @TenantId() empresaId: string,
@@ -43,7 +51,8 @@ export class TransportistasController {
     return this.transportistasService.update(empresaId, id, dto);
   }
 
-  @SoloRoles('gerente-operaciones', 'coordinador-transporte')
+  @Permiso('transportes')
+  @SoloRoles('gerente-operaciones', 'coordinador-transporte', 'admin')
   @Delete(':id')
   remove(@TenantId() empresaId: string, @Param('id') id: string) {
     return this.transportistasService.remove(empresaId, id);

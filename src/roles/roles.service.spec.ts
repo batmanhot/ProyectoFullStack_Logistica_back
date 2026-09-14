@@ -58,5 +58,28 @@ describe('RolesService', () => {
       prisma.withTenant.mockResolvedValue(null);
       await expect(service.verificarPermiso('e1', 'x', 'Clientes')).rejects.toThrow(BadRequestException);
     });
+
+    // Alcance de roles (2026-09-11): `modulo` acepta un array — match por
+    // cualquiera de la lista (endpoints alcanzables por el permiso completo
+    // O uno angosto, ej. 'despachos' vs 'despachos-aprobar').
+    it('con un array, permitido=true si el rol tiene CUALQUIERA de los módulos', async () => {
+      prisma.withTenant.mockResolvedValue({ permisos: [{ modulo: 'despachos-aprobar' }] });
+      const r = await service.verificarPermiso('e1', 'admin', ['despachos', 'despachos-aprobar']);
+      expect(r.permitido).toBe(true);
+      expect(r.viaComodin).toBe(false);
+    });
+
+    it('con un array, permitido=false si el rol no tiene ninguno', async () => {
+      prisma.withTenant.mockResolvedValue({ permisos: [{ modulo: 'inventario' }] });
+      const r = await service.verificarPermiso('e1', 'admin', ['despachos', 'despachos-aprobar']);
+      expect(r.permitido).toBe(false);
+    });
+
+    it('con un array, el comodín sigue bypaseando todo', async () => {
+      prisma.withTenant.mockResolvedValue({ permisos: [{ modulo: '*' }] });
+      const r = await service.verificarPermiso('e1', 'owner', ['despachos', 'despachos-aprobar']);
+      expect(r.permitido).toBe(true);
+      expect(r.viaComodin).toBe(true);
+    });
   });
 });

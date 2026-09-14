@@ -3,9 +3,13 @@ import { ProcesoAprobacion } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PROCESOS_APROBACION, PROCESO_APROBACION_VALUES } from '../common/aprobacion-procesos';
 
-// Owner/Admin aprueban siempre (permiso '*'); listarlos como aprobadores es
-// redundante — se descartan al guardar.
-const ROLES_SIEMPRE = ['owner', 'admin'];
+// Owner aprueba siempre (comodín '*' real, intocable) — listarlo como
+// aprobador es redundante, se descarta al guardar. Admin YA NO entra acá
+// (Alcance de roles, 2026-09-11): dejó de tener '*', así que si un tenant
+// quiere que apruebe algo tiene que configurarlo como a cualquier otro rol
+// (o confiar en el default de PROCESOS_APROBACION, que ya lo incluye para
+// Pedido Interno).
+const ROLES_SIEMPRE = ['owner'];
 
 export interface ReglaAprobacionVista {
   proceso: ProcesoAprobacion;

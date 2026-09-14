@@ -8,11 +8,18 @@ import { RecibirOrdenCompraDto } from './dto/recibir-orden-compra.dto';
 import { CreateGastoImportacionDto } from './dto/create-gasto-importacion.dto';
 import { ActualizarEstadoLogisticoDto } from './dto/actualizar-estado-logistico.dto';
 
-@Permiso('ordenes')
 @Controller('ordenes-compra')
 export class OrdenesCompraController {
   constructor(private readonly ordenesCompraService: OrdenesCompraService) {}
 
+  // Lectura abierta — mismo criterio que Almacenes/Categorías/Proveedores/
+  // Productos (Hallazgo Alto #7, auditoría 2026-07-29). Encontrado
+  // 2026-09-12: Alertas.jsx calcula "OC pendiente hace X días" para
+  // cualquier rol que no sea chofer/ejecutivo-comercial/coordinador-
+  // transporte/contable — eso incluye Admin y Gerente de Operaciones (ya no
+  // tienen 'ordenes' desde el Alcance de roles 2026-09-11), Supervisor y
+  // Despachador (nunca lo tuvieron): con @Permiso a nivel de clase, esos
+  // roles perdían en silencio las alertas de compras sin ningún aviso.
   @Get()
   findAll(
     @TenantId() empresaId: string,
@@ -27,11 +34,13 @@ export class OrdenesCompraController {
     return this.ordenesCompraService.findOne(empresaId, id);
   }
 
+  @Permiso('ordenes')
   @Post()
   create(@TenantId() empresaId: string, @Body() dto: CreateOrdenCompraDto) {
     return this.ordenesCompraService.create(empresaId, dto);
   }
 
+  @Permiso('ordenes')
   @Put(':id')
   update(
     @TenantId() empresaId: string,
@@ -42,6 +51,7 @@ export class OrdenesCompraController {
   }
 
   /** Recepción de mercadería — genera Movimientos ENTRADA reales. */
+  @Permiso('ordenes')
   @Post(':id/recibir')
   recibir(
     @TenantId() empresaId: string,
@@ -52,6 +62,7 @@ export class OrdenesCompraController {
   }
 
   /** Módulo de Importación — agrega un gasto (flete, seguro, aduana...) a la OC. */
+  @Permiso('ordenes')
   @Post(':id/gastos-importacion')
   agregarGasto(
     @TenantId() empresaId: string,
@@ -61,6 +72,7 @@ export class OrdenesCompraController {
     return this.ordenesCompraService.agregarGastoImportacion(empresaId, id, dto);
   }
 
+  @Permiso('ordenes')
   @Delete(':id/gastos-importacion/:gastoId')
   eliminarGasto(
     @TenantId() empresaId: string,
@@ -71,6 +83,7 @@ export class OrdenesCompraController {
   }
 
   /** Avanza el estado logístico (EN_ORIGEN → ... → NACIONALIZADA); nacionalizar calcula el landed cost. */
+  @Permiso('ordenes')
   @Patch(':id/estado-logistico')
   actualizarEstadoLogistico(
     @TenantId() empresaId: string,

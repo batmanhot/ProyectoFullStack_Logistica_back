@@ -22,33 +22,53 @@ const prisma = new PrismaClient();
 // para no romper Usuario.rolId de cuentas existentes — solo se redefinen su
 // label y permisos, tal como aprobó el usuario en el informe de roles.
 const ROLES_BASE: { codigo: string; label: string; permisos: string[] }[] = [
+  // Alcance de roles (2026-09-11): Owner es la ÚNICA llave maestra real —
+  // conserva '*' de verdad (RolesBaseService lo bloquea de por vida, ver
+  // PERMISOS_BLOQUEADOS). Admin y Gerente de Operaciones dejaron de ser
+  // "acceso total"/"mando operativo amplio": son roles de Gestión/
+  // Supervisión con un catálogo curado de módulos, editable desde
+  // /admin-saas/roles como cualquier rol del catálogo.
   { codigo: 'owner', label: 'Propietario', permisos: ['*'] },
-  { codigo: 'admin', label: 'Administrador', permisos: ['*'] },
+  {
+    codigo: 'admin',
+    label: 'Administrador',
+    permisos: [
+      'dashboard', 'alertas',
+      // Gobierno de la cuenta — usuarios, configuración, auditoría, salud
+      // del sistema. Esto es lo que hace un "Supervisor Operativo de la
+      // capa de Operaciones": administra la cuenta, no decide el negocio.
+      'usuarios', 'configuracion', 'auditoria', 'panel-auditoria',
+      'cola-sync', 'incidencias',
+      // Catálogos estructurales del negocio — altas/bajas masivas, no
+      // ejecución diaria (mismo criterio que Almacenes/Categorías/Áreas
+      // Internas, Hallazgo Alto #7 de la auditoría 2026-07-29).
+      'proyectos', 'almacenes', 'categorias', 'areas-internas', 'transportes',
+      // Reportes de control, compartidos con Gestión — supervisa sin decidir.
+      'kpis', 'reportes',
+      // Aprobar Despachos/Pedidos Internos SIN el módulo operativo completo
+      // (picking, empaque, despachar, entregar, etc. — eso sigue siendo de
+      // los roles operativos).
+      'despachos-aprobar', 'pedidos-internos-aprobar',
+    ],
+  },
   {
     codigo: 'gerente-operaciones',
     label: 'Gerente de Operaciones',
     permisos: [
       'dashboard', 'alertas',
-      'inventario', 'kardex', 'inv-fisico',
-      'entradas', 'salidas', 'devoluciones', 'transferencias',
-      'ordenes', 'cotizaciones', 'proveedores',
-      'clientes', 'despachos', 'pedidos-internos', 'empaque', 'transportes', 'flota',
-      'movimientos', 'vencimientos', 'reorden', 'prevision', 'reportes', 'kpis',
-      'mapa-almacen', 'lotes-series', 'lista-precios',
-      // Auditoría de seguridad 2026-07-29 (Hallazgo Alto #7): gestión de
-      // catálogos/estructura — antes sin gating, ahora requieren estos permisos.
-      'almacenes', 'categorias', 'areas-internas',
-      // Panorama de Almacenes (2026-09-10): supervisión multi-locación para el
-      // mando que está fuera de la operación diaria. Owner/Admin entran por '*'.
-      'panorama-almacenes',
-      // Fase 10 (Gestión Comercial, 2026-08-31): visibilidad del pipeline
-      // comercial para el mando operativo, no solo para el ejecutivo de ventas.
-      'oportunidades',
+      // Gestión: supervisar, controlar, decidir — NO minucia operativa
+      // (picking, empaque, transportes guía a guía, entradas/salidas, etc.,
+      // que antes tenía completas y ya no).
+      'panorama-almacenes', 'kpis', 'reportes', 'financiero', 'reorden', 'prevision',
       // Gestión de Pedidos por Proyecto (2026-09-04): puede VER el reporte de
       // consumo por proyecto/CDR, pero no gestionar el catálogo de Proyecto/
       // CDR — eso queda exclusivo de Admin/Owner (permiso 'proyectos', que
       // este rol no tiene).
       'reportes-proyecto',
+      // Aprobar Despachos y Pedidos Internos sin el módulo operativo
+      // completo — ya era el aprobador por defecto de Pedidos Internos
+      // (ReglaAprobacion), esto lo conserva sin darle picking/empaque/etc.
+      'despachos-aprobar', 'pedidos-internos-aprobar',
     ],
   },
   {
@@ -93,6 +113,14 @@ const ROLES_BASE: { codigo: string; label: string; permisos: string[] }[] = [
       // la página de Alertas de escritorio también estaba rota para este rol,
       // no solo el hub móvil nuevo.
       'ordenes', 'lotes-series',
+      // 2026-09-12: 'empaque' quedó huérfano — antes solo lo tenían Admin
+      // (por su '*' de entonces) y Gerente de Operaciones ("mando operativo
+      // amplio"), ninguno de los dos hace empaque de verdad. El Alcance de
+      // roles (2026-09-11) le quitó 'empaque' a ambos y NINGÚN rol se quedó
+      // con él — Empaque/Packing pasó a ser inalcanzable para todo el mundo
+      // salvo Owner. Es el siguiente paso físico después de Picking (que
+      // este rol ya tiene), así que le corresponde a él.
+      'empaque',
       // 2026-09-04 — ver nota en 'supervisor' arriba. Puede preparar/entregar
       // (Picking/Entregar) pero no Aprobar/Rechazar (@SoloRoles lo restringe).
       'pedidos-internos',
@@ -109,7 +137,11 @@ const ROLES_BASE: { codigo: string; label: string; permisos: string[] }[] = [
     // Supervisor+), ni tiene 'inventario'/'entradas'/'ajustes'/etc.
     codigo: 'despachador',
     label: 'Despachador',
-    permisos: ['dashboard', 'alertas', 'despachos', 'picking', 'pedidos-internos', 'transportes'],
+    // 'empaque' agregado 2026-09-12: mismo hallazgo que en 'almacenero' —
+    // el paso físico Picking → Empaque → Despachar quedaba con un hueco en
+    // medio para este rol (tenía Picking y Despachos, pero no lo que va
+    // entre los dos).
+    permisos: ['dashboard', 'alertas', 'despachos', 'picking', 'empaque', 'pedidos-internos', 'transportes'],
   },
   {
     codigo: 'analista-compras',

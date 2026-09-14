@@ -30,8 +30,10 @@ describe('AprobacionesService', () => {
       expect(pi.rolesAprobadores).toEqual(['gerente-operaciones']);
       expect(pi.porDefecto).toBe(false);
 
+      // 2026-09-12: el default de DESPACHO dejó de ser [] (ver
+      // aprobacion-procesos.ts) — mismo trío que PEDIDO_INTERNO.
       const desp = reglas.find((r) => r.proceso === 'DESPACHO')!;
-      expect(desp.rolesAprobadores).toEqual([]); // default
+      expect(desp.rolesAprobadores).toEqual(['admin', 'supervisor', 'gerente-operaciones']); // default
       expect(desp.porDefecto).toBe(true);
     });
   });
@@ -41,21 +43,23 @@ describe('AprobacionesService', () => {
       await expect(service.actualizar('e1', 'NO_EXISTE', [])).rejects.toThrow(BadRequestException);
     });
 
-    it('descarta owner/admin y valida los códigos contra el catálogo de roles', async () => {
+    // Alcance de roles (2026-09-11): admin dejó de tener '*' — ya no se
+    // descarta como owner, ahora se valida/persiste como cualquier otro rol.
+    it('descarta owner (llave maestra) pero conserva admin como rol configurable', async () => {
       const upsert = vi.fn().mockResolvedValue({});
       prisma.withTenant.mockImplementation((_e: string, fn: any) =>
         fn({
-          rol: { findMany: vi.fn().mockResolvedValue([{ codigo: 'supervisor' }]) },
+          rol: { findMany: vi.fn().mockResolvedValue([{ codigo: 'supervisor' }, { codigo: 'admin' }]) },
           reglaAprobacion: { upsert },
         }),
       );
 
       const r = await service.actualizar('e1', 'PEDIDO_INTERNO', ['owner', 'admin', 'supervisor']);
-      expect(r.rolesAprobadores).toEqual(['supervisor']);
+      expect(r.rolesAprobadores).toEqual(['admin', 'supervisor']);
       expect(upsert).toHaveBeenCalledWith(
         expect.objectContaining({
-          create: expect.objectContaining({ rolesAprobadores: ['supervisor'] }),
-          update: { rolesAprobadores: ['supervisor'] },
+          create: expect.objectContaining({ rolesAprobadores: ['admin', 'supervisor'] }),
+          update: { rolesAprobadores: ['admin', 'supervisor'] },
         }),
       );
     });

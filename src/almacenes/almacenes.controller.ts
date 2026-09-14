@@ -32,23 +32,24 @@ export class AlmacenesController {
   // Ejecutivo Comercial (necesitaba SOLO listar almacenes para el selector
   // de Portal de Pedidos, ver oportunidades del mismo día) — @SoloRoles
   // acota crear/editar/eliminar a quien ya gestionaba esto de verdad
-  // (Supervisor de Almacén "por definición", Gerente de Operaciones).
+  // (Supervisor de Almacén "por definición", Gerente de Operaciones,
+  // Admin — Alcance de roles 2026-09-11: gestiona este catálogo estructural).
   @Permiso('almacenes')
-  @SoloRoles('gerente-operaciones', 'supervisor')
+  @SoloRoles('gerente-operaciones', 'supervisor', 'admin')
   @Post()
   create(@TenantId() empresaId: string, @Body() dto: CreateAlmacenDto) {
     return this.almacenesService.create(empresaId, dto);
   }
 
   @Permiso('almacenes')
-  @SoloRoles('gerente-operaciones', 'supervisor')
+  @SoloRoles('gerente-operaciones', 'supervisor', 'admin')
   @Put(':id')
   update(@TenantId() empresaId: string, @Param('id') id: string, @Body() dto: UpdateAlmacenDto) {
     return this.almacenesService.update(empresaId, id, dto);
   }
 
   @Permiso('almacenes')
-  @SoloRoles('gerente-operaciones', 'supervisor')
+  @SoloRoles('gerente-operaciones', 'supervisor', 'admin')
   @Delete(':id')
   remove(@TenantId() empresaId: string, @Param('id') id: string) {
     return this.almacenesService.remove(empresaId, id);

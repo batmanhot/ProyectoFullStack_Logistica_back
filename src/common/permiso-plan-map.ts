@@ -27,7 +27,9 @@ export const PERMISO_A_GRUPO_PLAN: Record<string, string | undefined> = {
 
   clientes: 'despachos',
   despachos: 'despachos',
+  'despachos-aprobar': 'despachos', // aprobar sin operar — mismo grupo que 'despachos'
   'pedidos-internos': 'despachos',
+  'pedidos-internos-aprobar': 'despachos', // ídem, para 'pedidos-internos'
   'portal-pedidos': 'despachos',
   empaque: 'despachos',
   picking: 'despachos',

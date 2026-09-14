@@ -20,12 +20,21 @@ export class RolesBaseService {
 
   /**
    * `owner` y `admin` son la columna vertebral del gobierno multi-tenant
-   * (regla 3 de docs/GOBIERNO-PLATAFORMA.md): todo negocio tiene un Propietario
-   * y opcionalmente un Admin, ambos con acceso total. No se pueden eliminar
-   * ni se les puede recortar permisos — el `PermisosGuard` los trata como
-   * comodín (`*`). El label/descripcion sí son editables (son solo texto de UI).
+   * (regla 3 de docs/GOBIERNO-PLATAFORMA.md): todo negocio tiene un
+   * Propietario y opcionalmente un Admin. Ninguno de los dos se puede
+   * eliminar ni cambiar de código — eso lo sigue gobernando este set.
    */
   private static readonly PROTEGIDOS = new Set(['owner', 'admin']);
+
+  /**
+   * Alcance de roles (2026-09-11): de los dos "roles de gobierno", solo
+   * `owner` conserva el comodín `'*'` intocable de verdad — es la llave
+   * maestra de la plataforma. `admin` pasa a ser "Supervisor Operativo de
+   * la capa de Operaciones": un catálogo de permisos curado, editable por
+   * el SuperAdmin como cualquier rol del catálogo (con la salvedad de que
+   * sigue sin poder eliminarse ni renombrar su código, ver PROTEGIDOS).
+   */
+  private static readonly PERMISOS_BLOQUEADOS = new Set(['owner']);
 
   async findAll() {
     const roles = await this.prisma.rol.findMany({
@@ -37,6 +46,7 @@ export class RolesBaseService {
     return roles.map((r) => ({
       ...r,
       protegido: RolesBaseService.PROTEGIDOS.has(r.codigo),
+      permisosBloqueados: RolesBaseService.PERMISOS_BLOQUEADOS.has(r.codigo),
       enUso: uso[r.id] ?? { usuarios: 0, negocios: 0 },
     }));
   }
@@ -51,6 +61,7 @@ export class RolesBaseService {
     return {
       ...rol,
       protegido: RolesBaseService.PROTEGIDOS.has(rol.codigo),
+      permisosBloqueados: RolesBaseService.PERMISOS_BLOQUEADOS.has(rol.codigo),
       enUso: uso[rol.id] ?? { usuarios: 0, negocios: 0 },
     };
   }
@@ -79,10 +90,20 @@ export class RolesBaseService {
   async update(id: string, dto: UpdateAdminRolDto) {
     const actual = await this.findOne(id);
 
-    // owner/admin: solo texto de UI, nunca permisos (su acceso total es intocable).
-    if (actual.protegido && dto.permisos !== undefined) {
+    // owner: solo texto de UI, nunca permisos (su acceso total es intocable).
+    if (actual.permisosBloqueados && dto.permisos !== undefined) {
       throw new ForbiddenException(
-        `Los permisos de "${actual.codigo}" no se pueden modificar — es un rol de gobierno con acceso total.`,
+        `Los permisos de "${actual.codigo}" no se pueden modificar — es la llave maestra de la plataforma.`,
+      );
+    }
+
+    // Un rol de gobierno (owner/admin) no puede quedar sin ningún módulo —
+    // a diferencia de un rol de catálogo cualquiera, no hay forma de
+    // reasignarle uno a mano después si esto pasa por accidente (ambos son
+    // el único Propietario/Admin de cada negocio existente).
+    if (actual.protegido && dto.permisos !== undefined && dto.permisos.length === 0) {
+      throw new ForbiddenException(
+        `"${actual.codigo}" es un rol de gobierno y no puede quedar sin ningún módulo.`,
       );
     }
 

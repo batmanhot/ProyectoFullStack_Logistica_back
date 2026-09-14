@@ -30,6 +30,27 @@ const ALLOWLIST: Record<string, string[]> = {
   'almacenes/almacenes.controller.ts': ['findAll', 'findOne'],
   'cdr/cdr.controller.ts': ['findAll', 'findOne'],
   'proyectos/proyectos.controller.ts': ['findAll', 'findOne'],
+  // 2026-09-12: mismo criterio — bug real reportado (Almacenero con
+  // 'inventario'/'entradas'/'despachos' pero sin 'proveedores'/'clientes'/
+  // 'transportes' veía los selectores de proveedor/cliente/transportista
+  // vacíos pese a haber registros, porque el @Permiso a nivel de clase
+  // gateaba también la lectura). Ver comentario en cada controller.
+  'proveedores/proveedores.controller.ts': ['findAll', 'findOne'],
+  'clientes/clientes.controller.ts': ['findAll', 'findOne'],
+  'transportistas/transportistas.controller.ts': ['findAll', 'findOne'],
+  'productos/productos.controller.ts': ['findAll', 'findOne'],
+  // 2026-09-12 — segunda pasada del mismo hallazgo, tras revisar el resto de
+  // roles operativos: Alertas.jsx calcula alertas de "OC pendiente"/"lote
+  // por vencer" para cualquier rol no-especial, y Clientes.jsx asigna lista
+  // de precios al crear/editar un cliente — en los tres casos el @Permiso a
+  // nivel de clase bloqueaba también la lectura para roles que sí usan esas
+  // pantallas pero no gestionan ese catálogo puntual.
+  'ordenes-compra/ordenes-compra.controller.ts': ['findAll', 'findOne'],
+  'lotes/lotes.controller.ts': ['findAll', 'findOne'],
+  'listas-precios/listas-precios.controller.ts': ['findAll', 'findOne'],
+  // Único endpoint del controller, sin escritura que proteger.
+  'inventario/inventario.controller.ts': ['findAll'],
+  'cotizaciones/cotizaciones.controller.ts': ['findAll', 'findOne'],
   'movimientos/movimientos.controller.ts': ['findAll', 'findOne', 'kardex'],
   'roles/roles.controller.ts': ['verificarPermiso'],
   'auth/auth.controller.ts': ['logout', 'perfil'], // GET /auth/me — vista 360° del propio usuario, cualquier logueado, solo lectura

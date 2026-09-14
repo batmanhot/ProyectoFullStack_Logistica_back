@@ -45,6 +45,21 @@ describe('RolesBaseService', () => {
       expect(r[0]).toMatchObject({ codigo: 'owner', protegido: true, enUso: { usuarios: 0, negocios: 0 } });
       expect(r[1]).toMatchObject({ codigo: 'almacenero', protegido: false, enUso: { usuarios: 4, negocios: 2 } });
     });
+
+    // Alcance de roles (2026-09-11): admin sigue "protegido" (no se elimina,
+    // no cambia de código) pero YA NO tiene los permisos bloqueados — solo
+    // owner conserva ese candado, es la única llave maestra real.
+    it('admin queda protegido (no eliminable) pero con permisos editables; owner con ambos candados', async () => {
+      prisma.rol.findMany.mockResolvedValue([
+        { id: 'r1', codigo: 'owner', permisos: [] },
+        { id: 'r2', codigo: 'admin', permisos: [] },
+      ]);
+
+      const r = await service.findAll();
+
+      expect(r[0]).toMatchObject({ codigo: 'owner', protegido: true, permisosBloqueados: true });
+      expect(r[1]).toMatchObject({ codigo: 'admin', protegido: true, permisosBloqueados: false });
+    });
   });
 
   describe('findOne', () => {
@@ -108,12 +123,35 @@ describe('RolesBaseService', () => {
       await service.update('r2', { permisos: ['inventario'] });
       expect(prisma.permiso.deleteMany).toHaveBeenCalledWith({ where: { rolId: 'r2' } });
     });
+
+    // Alcance de roles (2026-09-11): admin es "protegido" (findAll/findOne)
+    // pero NO "permisosBloqueados" — su lista de módulos sí es editable.
+    it('permite editar los permisos de admin (protegido pero no bloqueado)', async () => {
+      prisma.rol.findFirst.mockResolvedValue({ id: 'r1', codigo: 'admin', permisos: [] });
+      prisma.rol.update.mockResolvedValue({ id: 'r1', permisos: [{ modulo: 'usuarios' }] });
+      await service.update('r1', { permisos: ['usuarios', 'configuracion'] });
+      expect(prisma.permiso.deleteMany).toHaveBeenCalledWith({ where: { rolId: 'r1' } });
+    });
+
+    it('bloquea dejar a admin sin ningún módulo', async () => {
+      prisma.rol.findFirst.mockResolvedValue({ id: 'r1', codigo: 'admin', permisos: [] });
+      await expect(service.update('r1', { permisos: [] })).rejects.toThrow(ForbiddenException);
+      expect(prisma.permiso.deleteMany).not.toHaveBeenCalled();
+    });
   });
 
   describe('remove', () => {
     it('bloquea eliminar un rol protegido', async () => {
       prisma.rol.findFirst.mockResolvedValue({ id: 'r1', codigo: 'owner', permisos: [] });
       await expect(service.remove('r1')).rejects.toThrow(ForbiddenException);
+    });
+
+    // Alcance de roles (2026-09-11): admin sigue no-eliminable aunque ya
+    // pueda editarse su lista de permisos — son dos candados independientes.
+    it('bloquea eliminar admin aunque sus permisos ya sean editables', async () => {
+      prisma.rol.findFirst.mockResolvedValue({ id: 'r1', codigo: 'admin', permisos: [] });
+      await expect(service.remove('r1')).rejects.toThrow(ForbiddenException);
+      expect(prisma.rol.delete).not.toHaveBeenCalled();
     });
 
     it('bloquea eliminar un rol en uso', async () => {
