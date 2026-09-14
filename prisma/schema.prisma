@@ -1958,6 +1958,11 @@ model PlataformaConfig {
   // Días que se conserva la Bitácora de plataforma (AuditoriaPlataforma). Un
   // cron diario purga lo más viejo. Ver AuditoriaPlataformaService.
   retencionAuditoriaDias Int      @default(365)
+  // Días de gracia tras `Empresa.fechaVencimiento` antes de bloquear el login
+  // y marcar el negocio "vencido" (ver admin/estado-negocio.util.ts). Un solo
+  // valor para toda la plataforma — a propósito, para no repetir el debate de
+  // "por negocio" que ya se descartó (ver sesión 2026-09-14).
+  diasGracia             Int      @default(3)
   updatedAt              DateTime @updatedAt
 
   @@map("plataforma_config")

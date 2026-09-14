@@ -6,7 +6,7 @@ import { EmailService } from '../../email/email.service';
 import { CreateReglaAlertaDto } from './dto/create-regla-alerta.dto';
 import { UpdateReglaAlertaDto } from './dto/update-regla-alerta.dto';
 import { ResolverAlertaSaludDto } from './dto/resolver-alerta-salud.dto';
-import { calcularEstadoEfectivo } from '../estado-negocio.util';
+import { DIAS_GRACIA, calcularEstadoEfectivo } from '../estado-negocio.util';
 
 function diasHasta(fecha: Date | null): number | null {
   if (!fecha) return null;
@@ -279,7 +279,7 @@ export class AlertasService {
   }
 
   private async calcularSalud(): Promise<AlertaSalud[]> {
-    const [empresas, reglasActivas, estados, incidentes, ultimoBackup, ultimaPrueba] = await Promise.all([
+    const [empresas, reglasActivas, estados, incidentes, ultimoBackup, ultimaPrueba, plataformaConfig] = await Promise.all([
       this.prisma.empresa.findMany({
         where: { estado: { notIn: ['cancelado', 'archivado'] } },
         select: { id: true, nombre: true, estado: true, plan: true, email: true, fechaVencimiento: true, activo: true },
@@ -289,7 +289,9 @@ export class AlertasService {
       this.prisma.incidenteMonitor.findMany({ where: { resueltoAt: null }, orderBy: { inicioAt: 'desc' } }),
       this.prisma.respaldoNegocio.findFirst({ where: { estado: 'COMPLETADO' }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } }),
       this.prisma.pruebaRestauracion.findFirst({ orderBy: { ejecutadaEn: 'desc' } }),
+      this.prisma.plataformaConfig.findFirst({ select: { diasGracia: true } }),
     ]);
+    const diasGracia = plataformaConfig?.diasGracia ?? DIAS_GRACIA;
 
     const planes = await this.prisma.planSaaS.findMany();
     const planPorId = new Map(planes.map((p) => [p.id, p]));
@@ -328,7 +330,7 @@ export class AlertasService {
 
     // 1) Vencimiento — mismo criterio que Negocios/Dashboard (calcularEstadoEfectivo).
     for (const e of empresas) {
-      const ef = calcularEstadoEfectivo(e);
+      const ef = calcularEstadoEfectivo(e, diasGracia);
       if (!['por_vencer', 'gracia', 'vencido'].includes(ef)) continue;
       const dias = diasHasta(e.fechaVencimiento);
       const sev: SeveridadAlerta = ef === 'vencido' ? 'critica' : ef === 'gracia' ? 'alta' : 'media';

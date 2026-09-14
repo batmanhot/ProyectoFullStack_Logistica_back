@@ -79,7 +79,7 @@ describe('AuthService', () => {
       await expect(service.buscarEmpresaPorCodigo('dlnorte')).resolves.toMatchObject({ id: '1' });
     });
 
-    it('permite el acceso dentro del período de gracia (venció hace 2 días, gracia = 5)', async () => {
+    it('permite el acceso dentro del período de gracia (venció hace 2 días, gracia default = 3)', async () => {
       const hace2dias = new Date(Date.now() - 2 * 86_400_000);
       prismaMock.empresa.findUnique.mockResolvedValue({
         id: '1', activo: true, estado: 'activo', fechaVencimiento: hace2dias, origen: 'admin_saas',
@@ -87,12 +87,22 @@ describe('AuthService', () => {
       await expect(service.buscarEmpresaPorCodigo('dlnorte')).resolves.toMatchObject({ id: '1' });
     });
 
-    it('bloquea una vez agotado el período de gracia (venció hace 6 días, gracia = 5)', async () => {
+    it('bloquea una vez agotado el período de gracia (venció hace 6 días, gracia default = 3)', async () => {
       const hace6dias = new Date(Date.now() - 6 * 86_400_000);
       prismaMock.empresa.findUnique.mockResolvedValue({
         id: '1', activo: true, estado: 'activo', fechaVencimiento: hace6dias,
       });
       await expect(service.buscarEmpresaPorCodigo('dlnorte')).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('usa el diasGracia configurado en PlataformaConfig (no el default hardcodeado)', async () => {
+      const hace7dias = new Date(Date.now() - 7 * 86_400_000);
+      prismaMock.empresa.findUnique.mockResolvedValue({
+        id: '1', activo: true, estado: 'activo', fechaVencimiento: hace7dias, origen: 'admin_saas',
+      });
+      // Con el default (3 días) esto bloquearía — con 10 días configurados, pasa.
+      prismaMock.plataformaConfig.findFirst.mockResolvedValue({ diasGracia: 10 });
+      await expect(service.buscarEmpresaPorCodigo('dlnorte')).resolves.toMatchObject({ id: '1' });
     });
 
     it('lanza Unauthorized si el negocio está archivado (eliminación definitiva)', async () => {

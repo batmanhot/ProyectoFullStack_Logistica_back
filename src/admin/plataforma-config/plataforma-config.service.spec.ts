@@ -67,5 +67,15 @@ describe('PlataformaConfigService', () => {
       });
       expect(r.accesoRapidoTarjetas).toBe(true);
     });
+
+    it('escribe diasGracia en la fila singleton', async () => {
+      prisma.plataformaConfig.findFirst.mockResolvedValue({ id: 'pc1', diasGracia: 3 });
+      const r = await service.update({ diasGracia: 10 });
+      expect(prisma.plataformaConfig.update).toHaveBeenCalledWith({
+        where: { id: 'pc1' },
+        data: { diasGracia: 10 },
+      });
+      expect(r.diasGracia).toBe(10);
+    });
   });
 });

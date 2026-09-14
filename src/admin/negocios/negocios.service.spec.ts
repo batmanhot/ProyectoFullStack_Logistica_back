@@ -270,7 +270,10 @@ describe('NegociosService.actualizarEstadosVencimiento (cron diario)', () => {
   let service: NegociosService;
 
   beforeEach(() => {
-    prismaMock = { empresa: { updateMany: vi.fn() } };
+    prismaMock = {
+      empresa: { updateMany: vi.fn() },
+      plataformaConfig: { findFirst: vi.fn().mockResolvedValue({ diasGracia: 3 }) },
+    };
     service = new NegociosService(prismaMock);
   });
 
@@ -300,6 +303,7 @@ describe('NegociosService.findAll / findOne — estadoEfectivo', () => {
       empresa: { findMany: vi.fn(), findUnique: vi.fn() },
       usuario: { findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null) },
       withTenant: vi.fn().mockResolvedValue(null),
+      plataformaConfig: { findFirst: vi.fn().mockResolvedValue({ diasGracia: 3 }) },
     };
     service = new NegociosService(prismaMock);
   });
@@ -407,6 +411,7 @@ describe('NegociosService.vista360', () => {
       facturaSaaS: { groupBy: vi.fn().mockResolvedValue([]), aggregate: vi.fn().mockResolvedValue({ _sum: { total: 0 }, _count: 0 }) },
       respaldoNegocio: { findFirst: vi.fn().mockResolvedValue(null), count: vi.fn().mockResolvedValue(0) },
       solicitudRestauracion: { count: vi.fn().mockResolvedValue(0) },
+      plataformaConfig: { findFirst: vi.fn().mockResolvedValue({ diasGracia: 3 }) },
       withTenant: vi.fn(async (_id: string, fn: any) =>
         fn({
           usuario: { findFirst: vi.fn().mockResolvedValue(null), count: vi.fn().mockResolvedValue(0) },

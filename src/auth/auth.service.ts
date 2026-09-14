@@ -3,7 +3,7 @@ import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditoriaService } from '../auditoria/auditoria.service';
-import { fechaVencimientoSuperoGracia } from '../admin/estado-negocio.util';
+import { DIAS_GRACIA, fechaVencimientoSuperoGracia } from '../admin/estado-negocio.util';
 import { entornoBloqueaAccesoRapido } from '../common/acceso-rapido.util';
 
 type UsuarioConRol = {
@@ -49,7 +49,7 @@ export class AuthService {
       },
     });
 
-    this.assertEmpresaAccesible(empresa);
+    await this.assertEmpresaAccesible(empresa);
 
     return { ...empresa, usuariosDemo: await this.listarUsuariosDemo(empresa!.id) };
   }
@@ -69,6 +69,12 @@ export class AuthService {
     return cfg.accesoRapidoTarjetas;
   }
 
+  /** Días de gracia configurados (SuperAdmin → Ajustes), con fallback si la fila aún no existe. */
+  private async diasGraciaActual(): Promise<number> {
+    const cfg = await this.prisma.plataformaConfig.findFirst({ select: { diasGracia: true } });
+    return cfg?.diasGracia ?? DIAS_GRACIA;
+  }
+
   /**
    * Compuerta única de "¿esta empresa puede iniciar sesión ahora mismo?" —
    * se llama desde los 4 puntos de entrada (buscarEmpresaPorCodigo, login,
@@ -77,9 +83,9 @@ export class AuthService {
    * en el paso 1 del flujo normal (alguien podría llamar login() directo con
    * un empresaId ya conocido, o tener un refresh token vivo hasta 7 días).
    */
-  private assertEmpresaAccesible(
+  private async assertEmpresaAccesible(
     empresa: { activo: boolean; estado?: string; fechaVencimiento?: Date | null } | null,
-  ): void {
+  ): Promise<void> {
     if (!empresa || !empresa.activo) {
       throw new UnauthorizedException('Empresa no encontrada o inactiva');
     }
@@ -92,8 +98,8 @@ export class AuthService {
     // mano dejaba al cliente afuera aunque sí hubiera pagado. Mismo cálculo
     // que usa el panel (calcularEstadoEfectivo) para el estado "Gracia", así
     // el badge que ve el PlatformAdmin y lo que realmente bloquea el login
-    // son SIEMPRE el mismo criterio.
-    if (empresa.fechaVencimiento && fechaVencimientoSuperoGracia(empresa.fechaVencimiento)) {
+    // son SIEMPRE el mismo criterio (mismo `diasGracia`, editable en Ajustes).
+    if (empresa.fechaVencimiento && fechaVencimientoSuperoGracia(empresa.fechaVencimiento, await this.diasGraciaActual())) {
       throw new UnauthorizedException('El período de prueba o la suscripción de esta empresa venció.');
     }
   }
@@ -120,7 +126,7 @@ export class AuthService {
       where: { id: empresaId },
       select: { activo: true, estado: true, fechaVencimiento: true },
     });
-    this.assertEmpresaAccesible(empresa);
+    await this.assertEmpresaAccesible(empresa);
 
     const usuario = (await this.prisma.withTenant(empresaId, (tx) =>
       tx.usuario.findUnique({
@@ -161,7 +167,7 @@ export class AuthService {
       where: { id: empresaId },
       select: { id: true, activo: true, estado: true, fechaVencimiento: true },
     });
-    this.assertEmpresaAccesible(empresa);
+    await this.assertEmpresaAccesible(empresa);
 
     const usuario = (await this.prisma.withTenant(empresaId, (tx) =>
       tx.usuario.findUnique({
@@ -229,7 +235,7 @@ export class AuthService {
       where: { id: payload.empresaId },
       select: { activo: true, estado: true, fechaVencimiento: true },
     });
-    this.assertEmpresaAccesible(empresa);
+    await this.assertEmpresaAccesible(empresa);
 
     const usuario = (await this.prisma.withTenant(payload.empresaId, (tx) =>
       tx.usuario.findUnique({

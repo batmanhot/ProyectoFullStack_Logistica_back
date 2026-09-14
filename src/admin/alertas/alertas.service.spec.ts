@@ -174,6 +174,7 @@ describe('AlertasService.salud — bandeja unificada', () => {
       pruebaRestauracion: { findFirst: vi.fn().mockResolvedValue(null) },
       planSaaS: { findMany: vi.fn().mockResolvedValue([{ id: 'pro', nombre: 'Pro', maxUsuarios: 2, maxAlmacenes: -1, maxProductos: -1, maxProveedores: -1, maxClientes: -1 }]) },
       alertaEnvio: { groupBy: vi.fn().mockResolvedValue([]) },
+      plataformaConfig: { findFirst: vi.fn().mockResolvedValue({ diasGracia: 3 }) },
       withTenant: vi.fn((_id: string, fn: any) => fn(txMock)),
     };
     service = new AlertasService(prismaMock, {} as any);

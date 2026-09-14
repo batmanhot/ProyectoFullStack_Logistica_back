@@ -31,6 +31,7 @@ export class PlataformaConfigService {
       data: {
         ...(dto.accesoRapidoTarjetas !== undefined && { accesoRapidoTarjetas: dto.accesoRapidoTarjetas }),
         ...(dto.retencionAuditoriaDias !== undefined && { retencionAuditoriaDias: dto.retencionAuditoriaDias }),
+        ...(dto.diasGracia !== undefined && { diasGracia: dto.diasGracia }),
       },
     });
     return { ...actualizada, bloqueadoPorEntorno: entornoBloqueaAccesoRapido() };

@@ -12,4 +12,11 @@ export class UpdatePlataformaConfigDto {
   @Min(30)
   @Max(3650)
   retencionAuditoriaDias?: number;
+
+  /** Días de gracia tras el vencimiento antes de bloquear el login (default 3). */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(90)
+  diasGracia?: number;
 }

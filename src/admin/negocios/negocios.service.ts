@@ -34,6 +34,12 @@ export class NegociosService {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  /** Días de gracia configurados (SuperAdmin → Ajustes), con fallback si la fila aún no existe. */
+  private async diasGraciaActual(): Promise<number> {
+    const cfg = await this.prisma.plataformaConfig.findFirst({ select: { diasGracia: true } });
+    return cfg?.diasGracia ?? DIAS_GRACIA;
+  }
+
   /**
    * A diferencia de TODO el resto del backend, aquí NUNCA se usa
    * withTenant() — un PlatformAdmin ve todas las empresas a la vez.
@@ -82,13 +88,14 @@ export class NegociosService {
       ),
     );
     const gobiernoPorEmpresa = new Map(gobierno);
+    const diasGracia = await this.diasGraciaActual();
 
     return empresas.map((e) => {
       const g = gobiernoPorEmpresa.get(e.id) ?? { usuarioOwner: null, usuarios: [] };
       return {
         ...e,
         usuarios: g.usuarios,
-        estadoEfectivo: calcularEstadoEfectivo(e),
+        estadoEfectivo: calcularEstadoEfectivo(e, diasGracia),
         usuarioOwner: g.usuarioOwner ?? null,
       };
     });
@@ -129,12 +136,13 @@ export class NegociosService {
         return { usuarioOwner, usuarios, totalUsuarios, ultimoAcceso: acceso?.timestamp ?? null };
       })
       .catch(() => ({ usuarioOwner: null, usuarios: [] as unknown[], totalUsuarios: 0, ultimoAcceso: null }));
+    const diasGracia = await this.diasGraciaActual();
 
     return {
       ...empresa,
       _count: { usuarios: scoped.totalUsuarios },
       usuarios: scoped.usuarios,
-      estadoEfectivo: calcularEstadoEfectivo(empresa),
+      estadoEfectivo: calcularEstadoEfectivo(empresa, diasGracia),
       ultimoAcceso: scoped.ultimoAcceso,
       usuarioOwner: scoped.usuarioOwner,
     };
@@ -150,7 +158,7 @@ export class NegociosService {
     const empresa = await this.prisma.empresa.findUnique({ where: { id } });
     if (!empresa) throw new NotFoundException('Negocio no encontrado');
 
-    const estadoEf = calcularEstadoEfectivo(empresa);
+    const estadoEf = calcularEstadoEfectivo(empresa, await this.diasGraciaActual());
     const diasVenc = empresa.fechaVencimiento
       ? Math.ceil((empresa.fechaVencimiento.getTime() - Date.now()) / 86_400_000)
       : null;
@@ -601,7 +609,7 @@ export class NegociosService {
    */
   @Cron(CronExpression.EVERY_DAY_AT_1AM)
   async actualizarEstadosVencimiento() {
-    const limiteGracia = new Date(Date.now() - DIAS_GRACIA * 86_400_000);
+    const limiteGracia = new Date(Date.now() - (await this.diasGraciaActual()) * 86_400_000);
     const { count } = await this.prisma.empresa.updateMany({
       where: {
         activo: true,
