@@ -19,7 +19,7 @@ import { LoginDto } from './dto/login.dto';
 import { DemoLoginDto } from './dto/demo-login.dto';
 import { RefreshDto } from './dto/refresh.dto';
 import { JwtPayload } from '../common/guards/jwt-auth.guard';
-import { clearRefreshCookie, cookieTenant, expEnSegundos, nombreCookieTenant, setRefreshCookie } from '../common/utils/auth-cookies';
+import { assertOrigenConfiable, clearRefreshCookie, cookieTenant, expEnSegundos, nombreCookieTenant, setRefreshCookie } from '../common/utils/auth-cookies';
 
 const RT_MAX_AGE = () => expEnSegundos(process.env.JWT_REFRESH_EXPIRES_IN, 7 * 86400);
 
@@ -72,6 +72,7 @@ export class AuthController {
     @Req() req: FastifyRequest,
     @Res({ passthrough: true }) res: FastifyReply,
   ) {
+    assertOrigenConfiable(req);
     const rt = req.cookies?.[nombreCookieTenant(dto.empresaId)];
     if (!rt) throw new UnauthorizedException('No hay sesión activa');
     const { accessToken, refreshToken, usuario } = await this.authService.refresh(rt);

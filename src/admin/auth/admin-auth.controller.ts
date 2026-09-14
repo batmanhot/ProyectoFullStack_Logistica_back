@@ -13,7 +13,7 @@ import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../common/decorators/public.decorator';
 import { AdminAuthService } from './admin-auth.service';
 import { AdminLoginDto } from './dto/admin-login.dto';
-import { RT_COOKIE, clearRefreshCookie, expEnSegundos, setRefreshCookie } from '../../common/utils/auth-cookies';
+import { RT_COOKIE, assertOrigenConfiable, clearRefreshCookie, expEnSegundos, setRefreshCookie } from '../../common/utils/auth-cookies';
 
 const RT_MAX_AGE = () => expEnSegundos(process.env.ADMIN_JWT_REFRESH_EXPIRES_IN, 30 * 86400);
 
@@ -45,6 +45,7 @@ export class AdminAuthController {
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   async refresh(@Req() req: FastifyRequest, @Res({ passthrough: true }) res: FastifyReply) {
+    assertOrigenConfiable(req);
     const rt = req.cookies?.[RT_COOKIE.admin.nombre];
     if (!rt) throw new UnauthorizedException('No hay sesión de administrador activa');
     const { accessToken, refreshToken, admin } = await this.adminAuthService.refresh(rt);
