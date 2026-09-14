@@ -3,10 +3,11 @@ import { AdminAuthModule } from '../auth/admin-auth.module';
 import { BackupsController } from './backups.controller';
 import { BackupsIngestController } from './backups-ingest.controller';
 import { BackupsService } from './backups.service';
+import { GithubActionsService } from './github-actions.service';
 
 @Module({
   imports: [AdminAuthModule],
   controllers: [BackupsController, BackupsIngestController],
-  providers: [BackupsService],
+  providers: [BackupsService, GithubActionsService],
 })
 export class BackupsModule {}

@@ -3,18 +3,20 @@ import { BackupsService } from './backups.service';
 
 describe('BackupsService', () => {
   let prisma: any;
+  let github: any;
   let service: BackupsService;
 
   beforeEach(() => {
     prisma = {
       empresa: { findUnique: vi.fn(), findMany: vi.fn() },
       respaldoNegocio: { findUnique: vi.fn(), findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn(), count: vi.fn(), create: vi.fn(), update: vi.fn() },
-      solicitudRestauracion: { findUnique: vi.fn(), findMany: vi.fn(), count: vi.fn(), create: vi.fn(), update: vi.fn() },
-      eventoRespaldo: { findMany: vi.fn(), create: vi.fn() },
+      solicitudRestauracion: { findUnique: vi.fn(), findMany: vi.fn(), count: vi.fn().mockResolvedValue(0), create: vi.fn(), update: vi.fn() },
+      eventoRespaldo: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn(), create: vi.fn() },
       pruebaRestauracion: { findFirst: vi.fn().mockResolvedValue(null), create: vi.fn() },
       $transaction: vi.fn((ops: any[]) => Promise.all(ops)),
     };
-    service = new BackupsService(prisma);
+    github = { dispatch: vi.fn().mockResolvedValue(undefined), estado: vi.fn(), urlWorkflow: vi.fn() };
+    service = new BackupsService(prisma, github);
   });
 
   describe('ingestarRespaldo', () => {
@@ -117,10 +119,12 @@ describe('BackupsService', () => {
   describe('flujo de aprobación / ejecución', () => {
     const mockUpdate = () => prisma.solicitudRestauracion.update.mockImplementation(({ data }: any) => ({
       id: 's1', respaldoId: 'b1', empresaId: 'e1', motivo: 'm', solicitadoPor: 'admin@x',
-      estado: data.estado, aprobacionContacto: data.aprobacionContacto ?? null, aprobacionEvidencia: data.aprobacionEvidencia ?? null,
-      aprobadoEn: data.aprobadoEn ?? null, ejecutadoEn: data.ejecutadoEn ?? null, rechazoMotivo: data.rechazoMotivo ?? null,
+      estado: data.estado, aprobacionContacto: data.aprobacionContacto ?? null, aprobacionEvidencia: data.aprobacionEvidencia ?? 'CORREO-1',
+      aprobadoEn: data.aprobadoEn ?? null, despachadoEn: data.despachadoEn ?? null, ejecutadoEn: data.ejecutadoEn ?? null, rechazoMotivo: data.rechazoMotivo ?? null,
       createdAt: new Date(), empresa: { nombre: 'A' }, respaldo: { alcance: 'base_datos', tamanoBytes: null, createdAt: new Date() },
     }));
+    // Estado APROBADA "feliz" que usan los tests de ejecutarRestauracion — con evidencia (obligatoria) y respaldo json_tenant.
+    const aprobadaBase = { id: 's1', estado: 'APROBADA', respaldoId: 'b1', empresaId: 'e1', aprobacionEvidencia: 'CORREO-1', nota: null };
 
     it('registrarAprobacion exige estado PENDIENTE_APROBACION', async () => {
       prisma.solicitudRestauracion.findUnique.mockResolvedValue({ id: 's1', estado: 'APROBADA', respaldoId: 'b1', empresaId: 'e1' });
@@ -139,16 +143,100 @@ describe('BackupsService', () => {
 
     it('ejecutarRestauracion exige estado APROBADA', async () => {
       prisma.solicitudRestauracion.findUnique.mockResolvedValue({ id: 's1', estado: 'PENDIENTE_APROBACION', respaldoId: 'b1', empresaId: 'e1' });
-      await expect(service.ejecutarRestauracion('s1', {} as any, 'admin@x')).rejects.toThrow(/APROBADA/);
+      await expect(service.ejecutarRestauracion('s1', { confirmacionNombre: 'A' } as any, 'admin@x')).rejects.toThrow(/APROBADA/);
+      expect(github.dispatch).not.toHaveBeenCalled();
     });
 
-    it('ejecutarRestauracion sobre una APROBADA la deja RESTAURADA con ejecutadoEn', async () => {
-      prisma.solicitudRestauracion.findUnique.mockResolvedValue({ id: 's1', estado: 'APROBADA', respaldoId: 'b1', empresaId: 'e1' });
+    it('ejecutarRestauracion rechaza si el nombre tipeado no coincide, sin llamar a GitHub', async () => {
+      prisma.solicitudRestauracion.findUnique.mockResolvedValue(aprobadaBase);
+      prisma.empresa.findUnique.mockResolvedValue({ nombre: 'Distribuidora Lima Norte' });
+      prisma.respaldoNegocio.findUnique.mockResolvedValue({ formato: 'json_tenant', storageKey: 'tenant/dlnorte/x.json.gz' });
+      await expect(
+        service.ejecutarRestauracion('s1', { confirmacionNombre: 'otro nombre' } as any, 'admin@x'),
+      ).rejects.toThrow(/nombre exacto/);
+      expect(github.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('ejecutarRestauracion rechaza un respaldo que no es json_tenant, sin llamar a GitHub', async () => {
+      prisma.solicitudRestauracion.findUnique.mockResolvedValue(aprobadaBase);
+      prisma.empresa.findUnique.mockResolvedValue({ nombre: 'Distribuidora Lima Norte' });
+      prisma.respaldoNegocio.findUnique.mockResolvedValue({ formato: 'pg_dump', storageKey: null });
+      await expect(
+        service.ejecutarRestauracion('s1', { confirmacionNombre: 'Distribuidora Lima Norte' } as any, 'admin@x'),
+      ).rejects.toThrow(/json_tenant/);
+      expect(github.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('ejecutarRestauracion rechaza si ya hay una EN_EJECUCION para el mismo negocio', async () => {
+      prisma.solicitudRestauracion.findUnique.mockResolvedValue(aprobadaBase);
+      prisma.empresa.findUnique.mockResolvedValue({ nombre: 'Distribuidora Lima Norte' });
+      prisma.respaldoNegocio.findUnique.mockResolvedValue({ formato: 'json_tenant', storageKey: 'tenant/dlnorte/x.json.gz' });
+      prisma.solicitudRestauracion.count.mockResolvedValue(1);
+      await expect(
+        service.ejecutarRestauracion('s1', { confirmacionNombre: 'Distribuidora Lima Norte' } as any, 'admin@x'),
+      ).rejects.toThrow(/en ejecución/);
+      expect(github.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('ejecutarRestauracion sobre una APROBADA válida dispara GitHub y deja EN_EJECUCION con despachadoEn', async () => {
+      prisma.solicitudRestauracion.findUnique.mockResolvedValue(aprobadaBase);
+      prisma.empresa.findUnique.mockResolvedValue({ nombre: 'Distribuidora Lima Norte' });
+      prisma.respaldoNegocio.findUnique.mockResolvedValue({ formato: 'json_tenant', storageKey: 'tenant/dlnorte/x.json.gz' });
       mockUpdate();
-      await service.ejecutarRestauracion('s1', {} as any, 'admin@x');
+      await service.ejecutarRestauracion('s1', { confirmacionNombre: '  distribuidora lima norte  ' } as any, 'admin@x');
+      expect(github.dispatch).toHaveBeenCalledWith('backup-restore-tenant.yml', { solicitud_id: 's1', confirmacion: 'RESTAURAR' });
       const data = prisma.solicitudRestauracion.update.mock.calls[0][0].data;
-      expect(data.estado).toBe('RESTAURADA');
-      expect(data.ejecutadoEn).toBeInstanceOf(Date);
+      expect(data.estado).toBe('EN_EJECUCION');
+      expect(data.despachadoEn).toBeInstanceOf(Date);
+      expect(data.ejecutadoEn).toBeUndefined(); // lo pone registrarResultadoRestauracion, no acá
+    });
+
+    it('si GitHub rechaza el dispatch, la solicitud NO cambia de estado', async () => {
+      prisma.solicitudRestauracion.findUnique.mockResolvedValue(aprobadaBase);
+      prisma.empresa.findUnique.mockResolvedValue({ nombre: 'Distribuidora Lima Norte' });
+      prisma.respaldoNegocio.findUnique.mockResolvedValue({ formato: 'json_tenant', storageKey: 'tenant/dlnorte/x.json.gz' });
+      github.dispatch.mockRejectedValue(new Error('GitHub rechazó las credenciales'));
+      await expect(
+        service.ejecutarRestauracion('s1', { confirmacionNombre: 'Distribuidora Lima Norte' } as any, 'admin@x'),
+      ).rejects.toThrow(/rechazó/);
+      expect(prisma.solicitudRestauracion.update).not.toHaveBeenCalled();
+    });
+
+    it('cancelarEjecucion exige estado EN_EJECUCION', async () => {
+      prisma.solicitudRestauracion.findUnique.mockResolvedValue({ id: 's1', estado: 'APROBADA', respaldoId: 'b1', empresaId: 'e1' });
+      await expect(service.cancelarEjecucion('s1', 'admin@x')).rejects.toThrow(/EN_EJECUCION/);
+    });
+
+    it('cancelarEjecucion vuelve a APROBADA y limpia despachadoEn', async () => {
+      prisma.solicitudRestauracion.findUnique.mockResolvedValue({ id: 's1', estado: 'EN_EJECUCION', respaldoId: 'b1', empresaId: 'e1' });
+      mockUpdate();
+      await service.cancelarEjecucion('s1', 'admin@x');
+      const data = prisma.solicitudRestauracion.update.mock.calls[0][0].data;
+      expect(data.estado).toBe('APROBADA');
+      expect(data.despachadoEn).toBeNull();
+    });
+  });
+
+  describe('dispararBackupAhora', () => {
+    it('dispara backup-nightly.yml y registra el evento', async () => {
+      const r = await service.dispararBackupAhora('admin@x');
+      expect(github.dispatch).toHaveBeenCalledWith('backup-nightly.yml');
+      expect(prisma.eventoRespaldo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ tipo: 'backup_dispatch', actor: 'admin@x' }) }),
+      );
+      expect(r.ok).toBe(true);
+    });
+
+    it('rechaza un segundo disparo dentro de la ventana de espera, sin llamar a GitHub', async () => {
+      prisma.eventoRespaldo.findFirst.mockResolvedValue({ fecha: new Date() });
+      await expect(service.dispararBackupAhora('admin@x')).rejects.toThrow(/Ya se disparó/);
+      expect(github.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('si GitHub rechaza el dispatch, no se crea el evento', async () => {
+      github.dispatch.mockRejectedValue(new Error('sin token'));
+      await expect(service.dispararBackupAhora('admin@x')).rejects.toThrow();
+      expect(prisma.eventoRespaldo.create).not.toHaveBeenCalled();
     });
   });
 

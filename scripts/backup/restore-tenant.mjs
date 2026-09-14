@@ -9,7 +9,7 @@
 //     node scripts/backup/restore-tenant.mjs --solicitud <id> --apply --url <DB_URL>
 //
 // Cómo funciona --apply:
-//   • Verifica que la solicitud esté APROBADA (con evidencia del cliente).
+//   • Verifica que la solicitud esté APROBADA o EN_EJECUCION (con evidencia del cliente).
 //   • Toma un "snapshot previo" del estado actual y lo sube.
 //   • En UNA transacción, con RLS activa (SET LOCAL app.current_tenant):
 //       - DELETE de cada tabla de tenant en orden inverso de FK
@@ -59,7 +59,12 @@ async function main() {
   console.log(`🔁 Restore de tenant · solicitud ${solicitudId} · ${apply ? 'APPLY (destructivo)' : 'DRY-RUN'}`);
 
   const sol = await leerSolicitud(solicitudId);
-  if (sol.estado !== 'APROBADA') throw new Error(`La solicitud está en ${sol.estado}. Solo se restaura una APROBADA.`);
+  // EN_EJECUCION: el panel ya dejó la solicitud en este estado al disparar el
+  // workflow (ver BackupsService.ejecutarRestauracion) antes de que este
+  // script la lea — es el caso normal, no un estado inválido.
+  if (sol.estado !== 'APROBADA' && sol.estado !== 'EN_EJECUCION') {
+    throw new Error(`La solicitud está en ${sol.estado}. Solo se restaura una APROBADA o EN_EJECUCION.`);
+  }
   if (!sol.empresaId || !SAFE_ID.test(sol.empresaId)) throw new Error(`empresaId inválido: ${sol.empresaId}`);
   if (sol.respaldo?.formato !== 'json_tenant' || !sol.respaldo?.storageKey) throw new Error('El respaldo no es un export json_tenant con storageKey.');
   console.log(`  · negocio ${sol.empresaCodigo} (${sol.empresaId}) · aprobación: ${sol.aprobacionEvidencia}`);

@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../common/decorators/public.decorator';
 import { PlatformAdminGuard } from '../../common/guards/platform-admin.guard';
 import type { PlatformAdminPayload } from '../../common/guards/platform-admin.guard';
@@ -54,6 +55,17 @@ export class BackupsController {
     return this.backups.destinos();
   }
 
+  @Get('automatizacion')
+  automatizacion() {
+    return this.backups.automatizacion();
+  }
+
+  @Throttle({ default: { limit: 3, ttl: 300_000 } })
+  @Post('ejecutar-ahora')
+  dispararBackupAhora(@Req() req: ReqAdmin) {
+    return this.backups.dispararBackupAhora(actorDe(req));
+  }
+
   @Get('actividad')
   actividad(@Query('limite') limite?: string) {
     return this.backups.actividad({ limite: limite ? Number(limite) : undefined });
@@ -103,5 +115,10 @@ export class BackupsController {
   @Post('restauraciones/:id/rechazar')
   rechazarRestauracion(@Param('id') id: string, @Body() dto: RechazarRestauracionDto, @Req() req: ReqAdmin) {
     return this.backups.rechazarRestauracion(id, dto, actorDe(req));
+  }
+
+  @Post('restauraciones/:id/cancelar-ejecucion')
+  cancelarEjecucion(@Param('id') id: string, @Req() req: ReqAdmin) {
+    return this.backups.cancelarEjecucion(id, actorDe(req));
   }
 }

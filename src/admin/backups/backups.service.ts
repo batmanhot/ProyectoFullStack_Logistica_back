@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -11,6 +11,11 @@ import {
 } from './dto/backups.dto';
 import { CrearRespaldoDto } from './dto/crear-respaldo.dto';
 import { IngestarRespaldoDto, PruebaRestauracionDto, ResultadoRestauracionDto } from './dto/ingesta.dto';
+import { GithubActionsService, WORKFLOW_BACKUP, WORKFLOW_RESTORE_TENANT } from './github-actions.service';
+
+// Ventana mínima entre dos disparos manuales de "backup ahora" — evita
+// encolar runners de GitHub por doble click o impaciencia del SuperAdmin.
+const BACKUP_DISPATCH_COOLDOWN_MIN = 10;
 
 // Sin backup COMPLETADO más nuevo que esto ⇒ el cron nocturno se cayó.
 const BACKUP_MAX_EDAD_HORAS = 26;
@@ -56,7 +61,10 @@ type RestauracionRow = Prisma.SolicitudRestauracionGetPayload<{
 
 @Injectable()
 export class BackupsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly github: GithubActionsService,
+  ) {}
 
   // ── Respaldos ──────────────────────────────────────────────────────────
 
@@ -89,7 +97,7 @@ export class BackupsService {
 
   async resumen() {
     // Conteos en BD en vez de traer todas las filas y filtrar en Node.
-    const [total, completados, verificados, sinCifrar, restauracionesPendientes, ultimoGlobal, ultimoTenant, ultimaPrueba] =
+    const [total, completados, verificados, sinCifrar, restauracionesPendientes, ultimoGlobal, ultimoTenant, ultimaPrueba, ultimoDispatch] =
       await this.prisma.$transaction([
         this.prisma.respaldoNegocio.count(),
         this.prisma.respaldoNegocio.count({ where: { estado: 'COMPLETADO' } }),
@@ -109,6 +117,7 @@ export class BackupsService {
           select: { createdAt: true },
         }),
         this.prisma.pruebaRestauracion.findFirst({ orderBy: { ejecutadaEn: 'desc' } }),
+        this.prisma.eventoRespaldo.findFirst({ where: { tipo: 'backup_dispatch' }, orderBy: { fecha: 'desc' }, select: { fecha: true } }),
       ]);
 
     const ultimoBackupAt =
@@ -125,10 +134,53 @@ export class BackupsService {
       ultimoBackupPlataformaAt: ultimoGlobal?.createdAt ?? null,
       ultimoBackupTenantAt: ultimoTenant?.createdAt ?? null,
       backupAtrasado: edadHoras > BACKUP_MAX_EDAD_HORAS,
+      // Último "Ejecutar backup ahora" disparado desde el panel — puede ser
+      // más nuevo que `ultimoBackupAt` mientras el job todavía está corriendo.
+      ultimoDispatchBackupAt: ultimoDispatch?.fecha ?? null,
       ultimaPrueba: ultimaPrueba
         ? { resultado: ultimaPrueba.resultado, ejecutadaEn: ultimaPrueba.ejecutadaEn, detalle: ultimaPrueba.detalle }
         : null,
     };
+  }
+
+  /** Estado de la integración con GitHub Actions — para que el panel deshabilite botones con tooltip en vez de fallar al clickear. */
+  automatizacion() {
+    const { disponible, motivo, repo } = this.github.estado();
+    return {
+      disponible,
+      motivo,
+      repo,
+      urlBackup: this.github.urlWorkflow(WORKFLOW_BACKUP),
+      urlRestauracion: this.github.urlWorkflow(WORKFLOW_RESTORE_TENANT),
+    };
+  }
+
+  /** Dispara el workflow nocturno a demanda — el resultado lo reportan backup-full.mjs/backup-tenant.mjs por el canal de ingesta, sin cambios acá. */
+  async dispararBackupAhora(actor: string) {
+    const ultimo = await this.prisma.eventoRespaldo.findFirst({
+      where: { tipo: 'backup_dispatch' },
+      orderBy: { fecha: 'desc' },
+      select: { fecha: true },
+    });
+    if (ultimo) {
+      const minutos = (Date.now() - ultimo.fecha.getTime()) / 60_000;
+      if (minutos < BACKUP_DISPATCH_COOLDOWN_MIN) {
+        throw new ConflictException(
+          `Ya se disparó un backup hace ${Math.ceil(minutos)} minuto(s). Esperá a que termine antes de pedir otro.`,
+        );
+      }
+    }
+
+    await this.github.dispatch(WORKFLOW_BACKUP); // primero GitHub — si falla, no queda un evento mentiroso
+
+    await this.prisma.eventoRespaldo.create({
+      data: {
+        tipo: 'backup_dispatch',
+        detalle: 'Backup completo + export por negocio solicitado desde el panel (GitHub Actions)',
+        actor,
+      },
+    });
+    return { ok: true, despachadoEn: new Date(), url: this.github.urlWorkflow(WORKFLOW_BACKUP) };
   }
 
   async findOne(id: string) {
@@ -422,18 +474,70 @@ export class BackupsService {
     });
   }
 
+  /**
+   * Dispara de verdad la restauración (workflow_dispatch en GitHub Actions).
+   * NO ejecuta nada acá — igual que el resto del sistema, el API solo pide y
+   * gobierna; `restore-tenant.mjs` corre en el job y cierra el ciclo llamando
+   * a `registrarResultadoRestauracion()` (más abajo, sin cambios).
+   */
   async ejecutarRestauracion(id: string, dto: EjecutarRestauracionDto, actor: string) {
     const s = await this.getRestauracion(id);
     if (s.estado !== 'APROBADA') {
       throw new BadRequestException('La restauración debe estar APROBADA (con evidencia del cliente) antes de ejecutarse');
     }
+    if (!s.aprobacionEvidencia?.trim()) {
+      throw new BadRequestException('La solicitud no tiene evidencia de aprobación registrada');
+    }
+
+    const [empresa, respaldo, enCurso] = await Promise.all([
+      this.prisma.empresa.findUnique({ where: { id: s.empresaId }, select: { nombre: true } }),
+      this.prisma.respaldoNegocio.findUnique({ where: { id: s.respaldoId }, select: { formato: true, storageKey: true } }),
+      this.prisma.solicitudRestauracion.count({ where: { empresaId: s.empresaId, estado: 'EN_EJECUCION' } }),
+    ]);
+    if (!empresa) throw new NotFoundException('El negocio de esta solicitud ya no existe');
+    if (respaldo?.formato !== 'json_tenant' || !respaldo?.storageKey) {
+      throw new BadRequestException(
+        'El respaldo asociado no es un export por negocio (json_tenant) con ubicación en el storage; no se puede restaurar automáticamente.',
+      );
+    }
+    if (empresa.nombre.trim().toLowerCase() !== dto.confirmacionNombre.trim().toLowerCase()) {
+      throw new BadRequestException('Escribe el nombre exacto del negocio para confirmar la restauración');
+    }
+    if (enCurso > 0) {
+      throw new ConflictException('Ya hay una restauración en ejecución para este negocio.');
+    }
+
+    // Primero GitHub, recién después la BD: si el dispatch falla, la
+    // solicitud se queda tal cual (APROBADA) en vez de mentir EN_EJECUCION.
+    await this.github.dispatch(WORKFLOW_RESTORE_TENANT, { solicitud_id: id, confirmacion: 'RESTAURAR' });
+
     return this.actualizarRestauracion(id, {
-      estado: 'RESTAURADA',
-      ejecutadoEn: new Date(),
+      estado: 'EN_EJECUCION',
+      despachadoEn: new Date(),
       nota: dto.nota?.trim() || s.nota,
     }, {
-      tipo: 'restauracion_ejecutada',
-      detalle: 'Orden de restauración confirmada y registrada en auditoría',
+      tipo: 'restauracion_dispatch',
+      detalle: 'Restauración disparada en GitHub Actions (backup-restore-tenant.yml); esperando el reporte del script',
+      actor,
+    });
+  }
+
+  /**
+   * Escotilla de emergencia: vuelve una restauración EN_EJECUCION a APROBADA
+   * sin que el job haya reportado — NO cancela nada en GitHub, solo desbloquea
+   * el registro (para cuando el job murió sin avisar, ver `despachadoEn`).
+   */
+  async cancelarEjecucion(id: string, actor: string) {
+    const s = await this.getRestauracion(id);
+    if (s.estado !== 'EN_EJECUCION') {
+      throw new BadRequestException('Solo se puede cancelar una restauración EN_EJECUCION');
+    }
+    return this.actualizarRestauracion(id, {
+      estado: 'APROBADA',
+      despachadoEn: null,
+    }, {
+      tipo: 'restauracion_dispatch_cancelado',
+      detalle: 'Ejecución marcada como abandonada desde el panel; el job de GitHub no reportó resultado',
       actor,
     });
   }
@@ -563,7 +667,7 @@ export class BackupsService {
   private mapRestauracionBasica(s: {
     id: string; estado: string; motivo: string; solicitadoPor: string;
     aprobacionContacto: string | null; aprobacionEvidencia: string | null;
-    aprobadoEn: Date | null; ejecutadoEn: Date | null; rechazoMotivo: string | null; createdAt: Date;
+    aprobadoEn: Date | null; despachadoEn: Date | null; ejecutadoEn: Date | null; rechazoMotivo: string | null; createdAt: Date;
   }) {
     return {
       id: s.id,
@@ -573,6 +677,7 @@ export class BackupsService {
       aprobacionContacto: s.aprobacionContacto,
       aprobacionEvidencia: s.aprobacionEvidencia,
       aprobadoEn: s.aprobadoEn,
+      despachadoEn: s.despachadoEn,
       ejecutadoEn: s.ejecutadoEn,
       rechazoMotivo: s.rechazoMotivo,
       createdAt: s.createdAt,

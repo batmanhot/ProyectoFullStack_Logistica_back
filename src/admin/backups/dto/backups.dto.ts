@@ -46,7 +46,12 @@ export class RegistrarAprobacionDto {
   nota?: string;
 }
 
+/** Ejecutar de verdad (dispara el workflow de GitHub Actions) — exige repetir el nombre del negocio, mismo patrón que "Eliminar definitivamente" en Negocios. */
 export class EjecutarRestauracionDto {
+  @IsString()
+  @IsNotEmpty()
+  confirmacionNombre: string;
+
   @IsOptional()
   @IsString()
   nota?: string;

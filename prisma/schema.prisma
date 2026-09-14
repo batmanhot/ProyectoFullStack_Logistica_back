@@ -1816,6 +1816,10 @@ model SolicitudRestauracion {
   aprobacionContacto  String?
   aprobacionEvidencia String?
   aprobadoEn          DateTime?
+  // Momento en que el panel disparó el workflow de GitHub Actions (estado
+  // EN_EJECUCION) — permite distinguir "recién arrancó" de "quedó colgada"
+  // cuando el job muere sin reportar (ver GithubActionsService).
+  despachadoEn        DateTime?
   ejecutadoEn         DateTime?
   rechazoMotivo       String?
   nota                String?
