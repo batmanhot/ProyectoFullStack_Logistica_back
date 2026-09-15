@@ -7,7 +7,11 @@ on:
 
 jobs:
   restore-test:
-    runs-on: ubuntu-latest
+    # Self-hosted — el dump completo a probar vive en BACKUP_LOCAL_DIR de la PC
+    # del usuario. `services:` (contenedor Docker) requiere Docker accesible
+    # desde el runner — ver docs/BACKUP-RESTORE.md §8 (integración WSL de
+    # Docker Desktop con la distro del runner).
+    runs-on: [self-hosted, linux, stockpro-backup]
     timeout-minutes: 30
     services:
       scratch:
@@ -28,6 +32,7 @@ jobs:
       BACKUP_STORAGE_SECRET: ${{ secrets.BACKUP_STORAGE_SECRET }}
       BACKUP_AGE_RECIPIENT: ${{ secrets.BACKUP_AGE_RECIPIENT }}
       BACKUP_AGE_IDENTITY_FILE: age-key.txt
+      BACKUP_LOCAL_DIR: ${{ vars.BACKUP_LOCAL_DIR }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

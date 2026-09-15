@@ -11,7 +11,10 @@ concurrency:
 
 jobs:
   backup:
-    runs-on: ubuntu-latest
+    # Self-hosted en la PC del usuario (WSL/Ubuntu) — el artefacto queda en
+    # BACKUP_LOCAL_DIR (disco local, no en un runner efímero de GitHub). Ver
+    # docs/BACKUP-RESTORE.md §8.
+    runs-on: [self-hosted, linux, stockpro-backup]
     timeout-minutes: 45
     env:
       DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }} # External URL, rol dueño
@@ -22,6 +25,10 @@ jobs:
       BACKUP_STORAGE_KEY_ID: ${{ secrets.BACKUP_STORAGE_KEY_ID }}
       BACKUP_STORAGE_SECRET: ${{ secrets.BACKUP_STORAGE_SECRET }}
       BACKUP_AGE_RECIPIENT: ${{ secrets.BACKUP_AGE_RECIPIENT }}
+      # Repository variable (Settings → Secrets and variables → Actions →
+      # Variables) — no es secreto, es una ruta local; así se cambia sin tocar
+      # este archivo. Sin BACKUP_STORAGE_BUCKET seteado, artifact.mjs cae acá.
+      BACKUP_LOCAL_DIR: ${{ vars.BACKUP_LOCAL_DIR }}
     steps:
       - uses: actions/checkout@v4
 

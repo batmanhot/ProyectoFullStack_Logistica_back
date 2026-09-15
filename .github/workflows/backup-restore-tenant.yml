@@ -27,7 +27,9 @@ concurrency:
 
 jobs:
   restore:
-    runs-on: ubuntu-latest
+    # Self-hosted — el backup a restaurar vive en BACKUP_LOCAL_DIR de la PC del
+    # usuario, no en un bucket. Ver docs/BACKUP-RESTORE.md §8.
+    runs-on: [self-hosted, linux, stockpro-backup]
     timeout-minutes: 60
     env:
       DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }} # External URL, rol dueño
@@ -39,6 +41,7 @@ jobs:
       BACKUP_STORAGE_SECRET: ${{ secrets.BACKUP_STORAGE_SECRET }}
       BACKUP_AGE_RECIPIENT: ${{ secrets.BACKUP_AGE_RECIPIENT }} # cifra el snapshot previo
       BACKUP_AGE_IDENTITY_FILE: age-key.txt # descifra el export del tenant
+      BACKUP_LOCAL_DIR: ${{ vars.BACKUP_LOCAL_DIR }}
     steps:
       - name: Validar disparo
         run: |

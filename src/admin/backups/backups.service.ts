@@ -40,10 +40,16 @@ function destinoDeNegocio(empresa: { nombre: string }) {
   };
 }
 
-/** Ubicación del object storage real (si el job la configuró) o el placeholder. */
+/**
+ * Ubicación real del artefacto: el bucket configurado, o — sin
+ * BACKUP_STORAGE_BUCKET — la carpeta local del runner self-hosted
+ * (ver docs/BACKUP-RESTORE.md §8). El API (Render) no ve BACKUP_LOCAL_DIR
+ * del job (vive como variable de GitHub Actions, no como env del API), así
+ * que no puede mostrar la ruta exacta, solo que es local.
+ */
 function destinoRegion(): string {
   const bucket = process.env.BACKUP_STORAGE_BUCKET;
-  return bucket ? `Object Storage · ${bucket}` : 'Object Storage · Sudamérica (Lima)';
+  return bucket ? `Object Storage · ${bucket}` : 'Almacenamiento local (equipo del operador)';
 }
 
 function destinoPlataforma() {
