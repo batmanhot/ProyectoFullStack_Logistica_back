@@ -170,7 +170,36 @@ VITE_API_URL=https://stockpro-api.onrender.com/api
 Se pierde la **base** (datos + rol `stockpro_app`). El web service y el
 `render.yaml` siguen.
 
-### Vía rápida (recomendada): `npm run bootstrap:render`
+### Vía más rápida (recomendada): `npm run redeploy:render`
+
+Un solo comando hace **todo**: crea la Postgres nueva por la API de Render,
+espera a que quede lista, corre `bootstrap:render` contra ella (migrate +
+rol RLS + seed + verificación), actualiza las env vars del servicio
+`stockpro-api` (sin pisar las que no cambian — ver el comentario de
+seguridad al inicio del script) y dispara el redeploy.
+
+1. **Una sola vez**: copiá `.env.render.example` a `.env.render` y completá
+   los valores estables, incluidos `RENDER_API_KEY` y `RENDER_SERVICE_ID`
+   (el archivo explica dónde sacar cada uno). `.env.render` está en `.gitignore`.
+2. Vista previa (no toca nada todavía — solo crea y verifica la base nueva,
+   y muestra el diff de env vars que aplicaría):
+   ```bash
+   npm run redeploy:render
+   ```
+3. Si el diff se ve bien, aplicar de verdad (escribe las env vars y
+   redeploya):
+   ```bash
+   npm run redeploy:render -- --apply
+   ```
+4. El script termina verificando `/api/health`. Si algo falla a mitad de
+   camino, no toca el servicio — la base nueva queda creada pero sin usar.
+5. Una vez confirmado que todo anda bien, borrar la base **vieja** a mano
+   desde el dashboard de Render (el script nunca la borra solo).
+
+### Vía intermedia: `npm run bootstrap:render` (sin API key de Render)
+
+Para cuando no querés darle a este repo una API key de Render — todo lo
+mismo que arriba, pero creando la base a mano en el dashboard.
 
 1. **Una sola vez**: copiá `.env.render.example` a `.env.render` y completá
    los valores estables (`STOCKPRO_APP_DB_PASSWORD`, `PLATFORM_ADMIN_*`,
@@ -187,7 +216,7 @@ Se pierde la **base** (datos + rol `stockpro_app`). El web service y el
    ya armado (mismo nombre de base, host interno, user `stockpro_app`).
 4. Pegá ese bloque en `stockpro-api` → Environment. Save → redeploy. Verificar §5.
 
-### Vía manual (si el script falla)
+### Vía manual (si los scripts fallan)
 
 Repetir **§2 completo** (migrate + db:app-role + seed) contra la nueva
 External URL — con la **misma** `STOCKPRO_APP_DB_PASSWORD` de antes — y armar
