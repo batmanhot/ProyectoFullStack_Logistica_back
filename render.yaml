@@ -98,6 +98,22 @@ services:
       - key: BACKUP_INGEST_TOKEN
         sync: false
 
+      # ── Backups: disparar workflows desde el panel ("Ejecutar backup
+      # ahora" / "Ejecutar restauración" / "Guardar" en Destino y política) ──
+      # PAT fine-grained (repo access: solo este repo; permisos Actions
+      # Read/write + Variables Read/write). IMPORTANTE: declarar acá con
+      # sync:false es obligatorio — una variable cargada solo a mano en el
+      # dashboard de Render, sin estar en este archivo, se BORRA sola en el
+      # próximo blueprint sync (así se perdió GITHUB_ACTIONS_TOKEN el
+      # 2026-09-15). Ver docs/BACKUP-RESTORE.md §2 y §8.6.
+      - key: GITHUB_ACTIONS_TOKEN
+        sync: false
+      - key: GITHUB_REPO
+        sync: false
+      # Opcional — default 'main' en el código si se deja vacío.
+      - key: GITHUB_ACTIONS_REF
+        sync: false
+
       # ── PlatformAdmin (consola SuperAdmin) ───────────────────────
       # Sin estas, el seed cae al admin demo público. Definirlas ANTES del seed.
       - key: PLATFORM_ADMIN_EMAIL
