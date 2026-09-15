@@ -46,6 +46,16 @@ export class GithubActionsService {
     return repo ? `https://github.com/${repo}/actions/workflows/${workflowFile}` : null;
   }
 
+  private headers() {
+    return {
+      Authorization: `Bearer ${process.env.GITHUB_ACTIONS_TOKEN}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'stockpro-api',
+      'Content-Type': 'application/json',
+    };
+  }
+
   /** Dispara `workflow_dispatch`. Éxito = 204 de GitHub, sin id de run (ver nota en BackupsService). */
   async dispatch(workflowFile: string, inputs?: Record<string, string>): Promise<void> {
     const { disponible, motivo, repo } = this.estado();
@@ -58,13 +68,7 @@ export class GithubActionsService {
     try {
       res = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/${workflowFile}/dispatches`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.GITHUB_ACTIONS_TOKEN}`,
-          Accept: 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28',
-          'User-Agent': 'stockpro-api',
-          'Content-Type': 'application/json',
-        },
+        headers: this.headers(),
         body: JSON.stringify(inputs && Object.keys(inputs).length > 0 ? { ref, inputs } : { ref }),
         signal: AbortSignal.timeout(10_000),
       });
@@ -97,5 +101,93 @@ export class GithubActionsService {
       throw new BadRequestException(`GitHub rechazó los parámetros del disparo: ${body.message ?? 'ver logs del servidor'}`);
     }
     throw new ServiceUnavailableException(`GitHub respondió HTTP ${res.status} al intentar disparar la ejecución.`);
+  }
+
+  /** Lee el valor actual de una repository variable — null si no existe (nunca se configuró). */
+  async getVariable(name: string): Promise<string | null> {
+    const { disponible, repo } = this.estado();
+    if (!disponible || !repo) return null;
+
+    let res: Response;
+    try {
+      res = await fetch(`https://api.github.com/repos/${repo}/actions/variables/${name}`, {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch (err) {
+      this.logger.error(`No se pudo contactar a GitHub para leer la variable "${name}": ${(err as Error).message}`);
+      throw new ServiceUnavailableException('No se pudo contactar a GitHub (timeout o error de red).');
+    }
+
+    if (res.status === 404) return null;
+    if (res.status === 200) {
+      const body: { value?: string } = await res.json().catch(() => ({}));
+      return body.value ?? null;
+    }
+    return this.lanzarErrorVariable('leer', name, res);
+  }
+
+  /**
+   * Crea o actualiza una repository variable — GitHub no tiene upsert: PATCH
+   * exige que ya exista (404 si no), así que ante un 404 se reintenta con POST
+   * (crear). Requiere que GITHUB_ACTIONS_TOKEN tenga el permiso "Variables:
+   * Read and write" (distinto del permiso "Actions" que ya usa `dispatch`).
+   */
+  async setVariable(name: string, value: string): Promise<void> {
+    const { disponible, motivo, repo } = this.estado();
+    if (!disponible || !repo) {
+      throw new ServiceUnavailableException(`La integración con GitHub no está configurada en el servidor (${motivo}).`);
+    }
+
+    let res: Response;
+    try {
+      res = await fetch(`https://api.github.com/repos/${repo}/actions/variables/${name}`, {
+        method: 'PATCH',
+        headers: this.headers(),
+        body: JSON.stringify({ name, value }),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch (err) {
+      this.logger.error(`No se pudo contactar a GitHub para actualizar la variable "${name}": ${(err as Error).message}`);
+      throw new ServiceUnavailableException('No se pudo contactar a GitHub (timeout o error de red).');
+    }
+
+    if (res.status === 204) return;
+    if (res.status !== 404) return this.lanzarErrorVariable('actualizar', name, res);
+
+    // No existía todavía — crearla.
+    let createRes: Response;
+    try {
+      createRes = await fetch(`https://api.github.com/repos/${repo}/actions/variables`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({ name, value }),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch (err) {
+      this.logger.error(`No se pudo contactar a GitHub para crear la variable "${name}": ${(err as Error).message}`);
+      throw new ServiceUnavailableException('No se pudo contactar a GitHub (timeout o error de red).');
+    }
+    if (createRes.status === 201) return;
+    return this.lanzarErrorVariable('crear', name, createRes);
+  }
+
+  private async lanzarErrorVariable(accion: string, name: string, res: Response): Promise<never> {
+    const body: { message?: string } = await res.json().catch(() => ({}));
+    this.logger.error(`GitHub respondió ${res.status} al ${accion} la variable "${name}": ${body.message ?? '(sin mensaje)'}`);
+
+    if (res.status === 401) {
+      throw new ServiceUnavailableException('GitHub rechazó las credenciales del servidor (token inválido o expirado).');
+    }
+    if (res.status === 403) {
+      throw new ServiceUnavailableException(
+        'El token no tiene el permiso "Variables: Read and write" sobre el repositorio (revisalo en GitHub → Settings → ' +
+          'Developer settings → el PAT usado como GITHUB_ACTIONS_TOKEN), o se agotó el límite de peticiones de GitHub.',
+      );
+    }
+    if (res.status === 422) {
+      throw new BadRequestException(`GitHub rechazó el valor: ${body.message ?? 'ver logs del servidor'}`);
+    }
+    throw new ServiceUnavailableException(`GitHub respondió HTTP ${res.status} al intentar ${accion} la variable.`);
   }
 }

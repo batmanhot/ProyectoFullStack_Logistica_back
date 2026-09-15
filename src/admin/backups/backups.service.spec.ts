@@ -15,7 +15,13 @@ describe('BackupsService', () => {
       pruebaRestauracion: { findFirst: vi.fn().mockResolvedValue(null), create: vi.fn() },
       $transaction: vi.fn((ops: any[]) => Promise.all(ops)),
     };
-    github = { dispatch: vi.fn().mockResolvedValue(undefined), estado: vi.fn(), urlWorkflow: vi.fn() };
+    github = {
+      dispatch: vi.fn().mockResolvedValue(undefined),
+      estado: vi.fn(),
+      urlWorkflow: vi.fn(),
+      getVariable: vi.fn().mockResolvedValue(null),
+      setVariable: vi.fn().mockResolvedValue(undefined),
+    };
     service = new BackupsService(prisma, github);
   });
 
@@ -236,6 +242,35 @@ describe('BackupsService', () => {
     it('si GitHub rechaza el dispatch, no se crea el evento', async () => {
       github.dispatch.mockRejectedValue(new Error('sin token'));
       await expect(service.dispararBackupAhora('admin@x')).rejects.toThrow();
+      expect(prisma.eventoRespaldo.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('configuracionLocalDir / actualizarLocalDir', () => {
+    it('lee el valor actual de la variable de GitHub', async () => {
+      github.getVariable.mockResolvedValue('/mnt/e/desarrollo/Backups-StockPro');
+      const r = await service.configuracionLocalDir();
+      expect(github.getVariable).toHaveBeenCalledWith('BACKUP_LOCAL_DIR');
+      expect(r).toEqual({ valor: '/mnt/e/desarrollo/Backups-StockPro' });
+    });
+
+    it('null cuando la variable nunca se configuró', async () => {
+      github.getVariable.mockResolvedValue(null);
+      expect(await service.configuracionLocalDir()).toEqual({ valor: null });
+    });
+
+    it('actualiza la variable en GitHub y registra el evento', async () => {
+      const r = await service.actualizarLocalDir({ valor: '/mnt/e/desarrollo/Backups-StockPro' } as any, 'admin@x');
+      expect(github.setVariable).toHaveBeenCalledWith('BACKUP_LOCAL_DIR', '/mnt/e/desarrollo/Backups-StockPro');
+      expect(prisma.eventoRespaldo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ tipo: 'configuracion_local_dir', actor: 'admin@x' }) }),
+      );
+      expect(r).toEqual({ ok: true, valor: '/mnt/e/desarrollo/Backups-StockPro' });
+    });
+
+    it('si GitHub rechaza la escritura, no se crea el evento', async () => {
+      github.setVariable.mockRejectedValue(new Error('sin permiso'));
+      await expect(service.actualizarLocalDir({ valor: '/tmp/x' } as any, 'admin@x')).rejects.toThrow();
       expect(prisma.eventoRespaldo.create).not.toHaveBeenCalled();
     });
   });

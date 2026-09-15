@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
+  ActualizarBackupLocalDirDto,
   ActualizarEstadoRespaldoDto,
   EjecutarRestauracionDto,
   RechazarRestauracionDto,
@@ -19,6 +20,10 @@ const BACKUP_DISPATCH_COOLDOWN_MIN = 10;
 
 // Sin backup COMPLETADO más nuevo que esto ⇒ el cron nocturno se cayó.
 const BACKUP_MAX_EDAD_HORAS = 26;
+
+// Nombre de la repository variable que leen los 3 workflows de backup cuando
+// no hay BACKUP_STORAGE_BUCKET (ver docs/BACKUP-RESTORE.md §8).
+const BACKUP_LOCAL_DIR_VAR = 'BACKUP_LOCAL_DIR';
 
 const ALCANCE_LABEL: Record<string, string> = {
   base_datos: 'Base de datos',
@@ -159,6 +164,25 @@ export class BackupsService {
       urlBackup: this.github.urlWorkflow(WORKFLOW_BACKUP),
       urlRestauracion: this.github.urlWorkflow(WORKFLOW_RESTORE_TENANT),
     };
+  }
+
+  /** Carpeta local (runner self-hosted) donde cae el backup cuando no hay object storage configurado. */
+  async configuracionLocalDir() {
+    const valor = await this.github.getVariable(BACKUP_LOCAL_DIR_VAR);
+    return { valor };
+  }
+
+  /** Actualiza la repository variable BACKUP_LOCAL_DIR en GitHub — la leen los 3 workflows en la próxima corrida. */
+  async actualizarLocalDir(dto: ActualizarBackupLocalDirDto, actor: string) {
+    await this.github.setVariable(BACKUP_LOCAL_DIR_VAR, dto.valor);
+    await this.prisma.eventoRespaldo.create({
+      data: {
+        tipo: 'configuracion_local_dir',
+        detalle: `Carpeta local de destino de los backups actualizada a "${dto.valor}" desde el panel.`,
+        actor,
+      },
+    });
+    return { ok: true, valor: dto.valor };
   }
 
   /** Dispara el workflow nocturno a demanda — el resultado lo reportan backup-full.mjs/backup-tenant.mjs por el canal de ingesta, sin cambios acá. */

@@ -125,4 +125,82 @@ describe('GithubActionsService', () => {
       await expect(service.dispatch('backup-nightly.yml')).rejects.toThrow(ServiceUnavailableException);
     });
   });
+
+  describe('getVariable', () => {
+    it('200 → devuelve el value', async () => {
+      const fetchMock = mockFetchOnce(200, { name: 'BACKUP_LOCAL_DIR', value: '/mnt/e/backups' });
+      global.fetch = fetchMock as unknown as typeof fetch;
+      await expect(service.getVariable('BACKUP_LOCAL_DIR')).resolves.toBe('/mnt/e/backups');
+      const [url, opts] = fetchMock.mock.calls[0];
+      expect(url).toBe(`https://api.github.com/repos/${REPO}/actions/variables/BACKUP_LOCAL_DIR`);
+      expect(opts.headers.Authorization).toBe(`Bearer ${TOKEN}`);
+    });
+
+    it('404 → null (nunca se configuró)', async () => {
+      global.fetch = mockFetchOnce(404) as unknown as typeof fetch;
+      await expect(service.getVariable('BACKUP_LOCAL_DIR')).resolves.toBeNull();
+    });
+
+    it('no configurado (sin token) → null, sin llamar a fetch', async () => {
+      delete process.env.GITHUB_ACTIONS_TOKEN;
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock as unknown as typeof fetch;
+      await expect(service.getVariable('BACKUP_LOCAL_DIR')).resolves.toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('403 → ServiceUnavailableException', async () => {
+      global.fetch = mockFetchOnce(403, { message: 'sin permiso' }) as unknown as typeof fetch;
+      await expect(service.getVariable('BACKUP_LOCAL_DIR')).rejects.toThrow(ServiceUnavailableException);
+    });
+
+    it('error de red → ServiceUnavailableException', async () => {
+      global.fetch = vi.fn().mockRejectedValue(new Error('network fail')) as unknown as typeof fetch;
+      await expect(service.getVariable('BACKUP_LOCAL_DIR')).rejects.toThrow(ServiceUnavailableException);
+    });
+  });
+
+  describe('setVariable', () => {
+    it('no configurado → ServiceUnavailableException, sin llamar a fetch', async () => {
+      delete process.env.GITHUB_ACTIONS_TOKEN;
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock as unknown as typeof fetch;
+      await expect(service.setVariable('BACKUP_LOCAL_DIR', '/tmp')).rejects.toThrow(ServiceUnavailableException);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('PATCH 204 (ya existía) → resuelve sin crear', async () => {
+      const fetchMock = mockFetchOnce(204);
+      global.fetch = fetchMock as unknown as typeof fetch;
+      await expect(service.setVariable('BACKUP_LOCAL_DIR', '/mnt/e/backups')).resolves.toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, opts] = fetchMock.mock.calls[0];
+      expect(url).toBe(`https://api.github.com/repos/${REPO}/actions/variables/BACKUP_LOCAL_DIR`);
+      expect(opts.method).toBe('PATCH');
+      expect(JSON.parse(opts.body)).toEqual({ name: 'BACKUP_LOCAL_DIR', value: '/mnt/e/backups' });
+    });
+
+    it('PATCH 404 (no existía) → reintenta con POST para crearla', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ status: 404, json: () => Promise.resolve({}) } as Response)
+        .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({}) } as Response);
+      global.fetch = fetchMock as unknown as typeof fetch;
+      await expect(service.setVariable('BACKUP_LOCAL_DIR', '/mnt/e/backups')).resolves.toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const [createUrl, createOpts] = fetchMock.mock.calls[1];
+      expect(createUrl).toBe(`https://api.github.com/repos/${REPO}/actions/variables`);
+      expect(createOpts.method).toBe('POST');
+      expect(JSON.parse(createOpts.body)).toEqual({ name: 'BACKUP_LOCAL_DIR', value: '/mnt/e/backups' });
+    });
+
+    it('403 al actualizar → ServiceUnavailableException con mención al permiso "Variables"', async () => {
+      global.fetch = mockFetchOnce(403, { message: 'sin permiso' }) as unknown as typeof fetch;
+      await expect(service.setVariable('BACKUP_LOCAL_DIR', '/tmp')).rejects.toThrow(/Variables: Read and write/);
+    });
+
+    it('error de red → ServiceUnavailableException', async () => {
+      global.fetch = vi.fn().mockRejectedValue(new Error('network fail')) as unknown as typeof fetch;
+      await expect(service.setVariable('BACKUP_LOCAL_DIR', '/tmp')).rejects.toThrow(ServiceUnavailableException);
+    });
+  });
 });

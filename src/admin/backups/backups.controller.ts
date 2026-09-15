@@ -7,6 +7,7 @@ import { PlatformAuditInterceptor } from '../../common/interceptors/platform-aud
 import { BackupsService } from './backups.service';
 import { CrearRespaldoDto } from './dto/crear-respaldo.dto';
 import {
+  ActualizarBackupLocalDirDto,
   ActualizarEstadoRespaldoDto,
   EjecutarRestauracionDto,
   RechazarRestauracionDto,
@@ -58,6 +59,17 @@ export class BackupsController {
   @Get('automatizacion')
   automatizacion() {
     return this.backups.automatizacion();
+  }
+
+  @Get('configuracion/local-dir')
+  configuracionLocalDir() {
+    return this.backups.configuracionLocalDir();
+  }
+
+  @Throttle({ default: { limit: 5, ttl: 300_000 } })
+  @Patch('configuracion/local-dir')
+  actualizarLocalDir(@Body() dto: ActualizarBackupLocalDirDto, @Req() req: ReqAdmin) {
+    return this.backups.actualizarLocalDir(dto, actorDe(req));
   }
 
   @Throttle({ default: { limit: 3, ttl: 300_000 } })

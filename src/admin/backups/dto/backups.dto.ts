@@ -1,4 +1,4 @@
-import { IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsIn, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
 /** Registrar el resultado de una comprobación de restaurabilidad. */
 export class VerificarIntegridadDto {
@@ -61,4 +61,12 @@ export class RechazarRestauracionDto {
   @IsString()
   @IsNotEmpty()
   motivo: string;
+}
+
+/** Carpeta local (en el runner self-hosted) donde caen los backups sin object storage configurado. */
+export class ActualizarBackupLocalDirDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  valor: string;
 }
