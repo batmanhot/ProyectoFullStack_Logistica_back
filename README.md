@@ -369,9 +369,9 @@ npm test
 
 ## 9. Documentación adicional
 
-- `../../docs/StockPro-Backend-Especificacion.md` — especificación
+- `../../docs/historico/StockPro-Backend-Especificacion.md` — especificación
   funcional original (Fase 1-3).
-- `../../docs/BITACORA.md`, `ESTADO-BACKEND.md` — bitácora histórica de
+- `../../docs/BITACORA.md`, `historico/ESTADO-BACKEND.md` — bitácora histórica de
   desarrollo por fase.
 - `prisma/schema.prisma` — fuente de verdad del modelo de datos, con
   comentarios de decisión por fase.
