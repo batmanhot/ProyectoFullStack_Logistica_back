@@ -236,7 +236,11 @@ const PLANES_BASE: Array<{
     nombre: 'Prueba gratuita',
     precioMensual: 0,
     precioAnual: 0,
-    caracteristicas: ['14 días de prueba', '1 almacén', 'Soporte por email'],
+    // El texto debe reflejar `vigenciaDias` (30, por el @default del schema
+    // — este plan no lo sobreescribe). Antes decía "14 días de prueba" y
+    // contradecía a la propia tarjeta, que muestra vigenciaDias en pantalla
+    // (auditoría 2026-09-16, PlanCard.jsx).
+    caracteristicas: ['30 días de prueba', '1 almacén', 'Soporte por email'],
     maxUsuarios: 2,
     maxProductos: 50,
     maxAlmacenes: 1,

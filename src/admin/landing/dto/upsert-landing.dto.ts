@@ -13,8 +13,8 @@ import {
  * un array, y el total acotado — así un guardado corrupto no rompe la web
  * pública en silencio.
  */
-const SECCIONES_OBJETO = ['sitio', 'hero', 'contacto', 'redesSociales', 'seo', 'footer'];
-const SECCIONES_ARRAY = ['caracteristicas'];
+const SECCIONES_OBJETO = ['sitio', 'hero', 'contacto', 'redesSociales', 'seo', 'footer', 'onPremise'];
+const SECCIONES_ARRAY = ['caracteristicas', 'testimonios', 'stats'];
 const MAX_BYTES = 100_000;
 
 @ValidatorConstraint({ name: 'landingShape', async: false })
